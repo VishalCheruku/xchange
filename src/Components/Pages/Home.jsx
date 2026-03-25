@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useDeferredValue } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useDeferredValue } from 'react'
 import Navbar from '../Navbar/Navbar'
 import Login from '../Modal/Login'
 import Sell from '../Modal/Sell'
@@ -6,6 +6,7 @@ import Card from '../Card/Card'
 import { ItemsContext } from '../Context/Item'
 import { auth } from '../Firebase/Firebase'
 import { useAuthState } from 'react-firebase-hooks/auth'
+import { useAIMode } from '../Context/AIMode'
 
 
 const Home = () => {
@@ -20,6 +21,16 @@ const Home = () => {
   const [viewMode, setViewMode] = useState('grid')
   const [favModal, setFavModal] = useState(false)
   const [user] = useAuthState(auth)
+  const {
+    aiModeEnabled,
+    toggleAIMode,
+    getAdaptiveProfile,
+    rankListingsForProfile,
+    trackAdaptiveInteraction,
+  } = useAIMode()
+  const [adaptiveProfile, setAdaptiveProfile] = useState(null)
+  const [personalizedRecommendations, setPersonalizedRecommendations] = useState(null)
+  const interactionThrottleRef = useRef(new Map())
 
   const toggleModal = ()=>{setModal(!openModal)}
   const toggleModalSell = () => {setModalSell(!openModalSell)}
@@ -71,6 +82,25 @@ const Home = () => {
     if (!item?.id) return
     setFavoriteIds((prev) => {
       const exists = prev.includes(item.id)
+      if (!exists && aiModeEnabled && user?.uid) {
+        const key = `favorite:${item.id}`
+        const now = Date.now()
+        const lastAt = interactionThrottleRef.current.get(key) || 0
+        if (now - lastAt > 15000) {
+          interactionThrottleRef.current.set(key, now)
+          trackAdaptiveInteraction({
+            userId: user.uid,
+            interactionType: 'favorite',
+            listing: {
+              id: item.id,
+              category: item.category,
+              price: item.price,
+            },
+          }).then((profile) => {
+            if (profile) setAdaptiveProfile(profile)
+          })
+        }
+      }
       if (exists) return prev.filter((id) => id !== item.id)
       return [item.id, ...prev].slice(0, 50)
     })
@@ -82,6 +112,25 @@ const Home = () => {
       const next = [item.id, ...prev.filter((id) => id !== item.id)]
       return next.slice(0, 12)
     })
+    if (aiModeEnabled && user?.uid) {
+      const key = `view:${item.id}`
+      const now = Date.now()
+      const lastAt = interactionThrottleRef.current.get(key) || 0
+      if (now - lastAt > 12000) {
+        interactionThrottleRef.current.set(key, now)
+        trackAdaptiveInteraction({
+          userId: user.uid,
+          interactionType: 'view',
+          listing: {
+            id: item.id,
+            category: item.category,
+            price: item.price,
+          },
+        }).then((profile) => {
+          if (profile) setAdaptiveProfile(profile)
+        })
+      }
+    }
   }
 
   const deferredSearch = useDeferredValue(searchQuery)
@@ -139,7 +188,47 @@ const Home = () => {
     return [...items].sort((a, b) => getDateValue(b) - getDateValue(a))
   }, [itemsCtx.items])
 
-  const recommendations = filteredItems.length > 0 ? filteredItems : latestItems
+  const baseRecommendations = filteredItems.length > 0 ? filteredItems : latestItems
+  const recommendations = personalizedRecommendations?.length ? personalizedRecommendations : baseRecommendations
+
+  const aiHintsByItem = useMemo(() => {
+    if (!aiModeEnabled) return {}
+    const bucket = {}
+    const byCategory = new Map()
+    const items = itemsCtx.items || []
+
+    items.forEach((entry) => {
+      if (!entry?.category) return
+      const price = Number(String(entry.price || '').replace(/[^\d.]/g, ''))
+      if (!Number.isFinite(price) || price <= 0) return
+      if (!byCategory.has(entry.category)) byCategory.set(entry.category, [])
+      byCategory.get(entry.category).push(price)
+    })
+
+    const medians = new Map()
+    byCategory.forEach((prices, category) => {
+      const sorted = [...prices].sort((a, b) => a - b)
+      medians.set(category, sorted[Math.floor(sorted.length / 2)] || null)
+    })
+
+    items.forEach((entry) => {
+      const price = Number(String(entry.price || '').replace(/[^\d.]/g, ''))
+      const median = medians.get(entry.category)
+      if (!Number.isFinite(price) || !Number.isFinite(median) || median <= 0) return
+      const ratio = price / median
+      const dealTag = ratio < 0.88 ? 'underpriced' : ratio > 1.12 ? 'overpriced' : 'fair'
+      const trustScore = Math.max(
+        30,
+        Math.min(
+          96,
+          45 + Math.min((entry.description || '').length, 120) / 3 + (entry.userName ? 10 : 0),
+        ),
+      )
+      bucket[entry.id] = { dealTag, trustScore: Math.round(trustScore) }
+    })
+
+    return bucket
+  }, [aiModeEnabled, itemsCtx.items])
 
   const recentItems = useMemo(() => {
     const items = itemsCtx.items || []
@@ -150,6 +239,62 @@ const Home = () => {
   const clearRecentlyViewed = () => {
     setRecentIds([])
   }
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      if (!aiModeEnabled || !user?.uid) {
+        setAdaptiveProfile(null)
+        return
+      }
+      const profile = await getAdaptiveProfile(user.uid)
+      if (!cancelled && profile) {
+        setAdaptiveProfile(profile)
+      }
+    }
+    run().catch((error) => console.warn('Adaptive profile fetch failed:', error))
+    return () => {
+      cancelled = true
+    }
+  }, [aiModeEnabled, user?.uid, getAdaptiveProfile])
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      if (!aiModeEnabled || !user?.uid || baseRecommendations.length === 0) {
+        setPersonalizedRecommendations(null)
+        return
+      }
+      const payloadListings = baseRecommendations.slice(0, 120).map((item) => ({
+        id: item.id,
+        title: item.title,
+        category: item.category,
+        price: item.price,
+        description: item.description,
+        imageUrl: item.imageUrl,
+        createAt: item.createAt,
+        createdAt: item.createdAt,
+      }))
+      const ranked = await rankListingsForProfile({
+        userId: user.uid,
+        listings: payloadListings,
+      })
+      if (cancelled) return
+      const rankedList = Array.isArray(ranked?.rankedListings) ? ranked.rankedListings : []
+      if (rankedList.length === 0) {
+        setPersonalizedRecommendations(null)
+      } else {
+        const byId = new Map(baseRecommendations.map((entry) => [entry.id, entry]))
+        const merged = rankedList.map((entry) => ({ ...byId.get(entry.id), personalizationScore: entry.personalizationScore })).filter((entry) => entry?.id)
+        setPersonalizedRecommendations(merged)
+      }
+      if (ranked?.profile) setAdaptiveProfile(ranked.profile)
+    }
+    run().catch((error) => console.warn('Adaptive ranking failed:', error))
+    return () => {
+      cancelled = true
+    }
+  }, [aiModeEnabled, user?.uid, baseRecommendations, rankListingsForProfile])
 
 
   return (
@@ -178,10 +323,28 @@ const Home = () => {
             <button onClick={toggleModalSell} className="xchange-btn">
               List an item
             </button>
+            <button onClick={toggleAIMode} className={`xchange-btn ${aiModeEnabled ? '' : 'ghost'}`}>
+              Go AI Mode
+            </button>
             <a href="#listings" className="xchange-btn ghost">
               Explore listings
             </a>
           </div>
+          {aiModeEnabled ? (
+            <p className="mt-4 text-sm text-cyan-700 font-semibold">
+              AI Mode is active: chat suggestions, pricing scenarios, and trust signals are now running.
+            </p>
+          ) : null}
+          {aiModeEnabled && adaptiveProfile ? (
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className="ai-mini-chip fair">Style: {adaptiveProfile.negotiationStyle || 'balanced'}</span>
+              <span className="ai-mini-chip trust">Speed: {adaptiveProfile.responseSpeed || 'normal'}</span>
+              <span className="ai-mini-chip trust">Budget: {adaptiveProfile?.pricePreferences?.budgetBand || 'balanced'}</span>
+              {(adaptiveProfile?.topCategories || []).slice(0, 2).map((category) => (
+                <span key={category} className="ai-mini-chip underpriced">Prefers {category}</span>
+              ))}
+            </div>
+          ) : null}
           <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="stat-card">
               <p className="stat-title">Active listings</p>
@@ -290,6 +453,8 @@ const Home = () => {
           onToggleFavorite={toggleFavorite}
           onViewItem={trackRecent}
           compact
+          aiMode={aiModeEnabled}
+          aiHintsByItem={aiHintsByItem}
         />
      )}
 
@@ -311,6 +476,8 @@ const Home = () => {
           }
         }}
         emptyMessage="No listings match your filters yet. Try loosening the price range or search."
+        aiMode={aiModeEnabled}
+        aiHintsByItem={aiHintsByItem}
       />
 
       {favModal && (

@@ -7,6 +7,7 @@ import { useAuthState } from "react-firebase-hooks/auth";
 import { auth, fireStore } from "../Firebase/Firebase";
 import { collection, onSnapshot, query, where, deleteDoc, doc, getDocs } from "firebase/firestore";
 import { ItemsContext } from "../Context/Item";
+import { useAIMode } from "../Context/AIMode";
 
 /* ─── time formatter ─────────────────────────────────────────────── */
 const fmtTime = (ts) => {
@@ -30,6 +31,7 @@ const Chat = () => {
   const [search, setSearch] = useState("");
   const [user] = useAuthState(auth);
   const itemsCtx = ItemsContext();
+  const { aiModeEnabled } = useAIMode();
 
   const toggleModal = () => setModal((p) => !p);
   const toggleModalSell = () => setModalSell((p) => !p);
@@ -172,6 +174,11 @@ const Chat = () => {
                   }}>{totalUnread} new</span>
                 )}
               </h1>
+              {aiModeEnabled ? (
+                <p style={{ marginTop: 6, fontSize: 12, color: "#67e8f9", fontWeight: 700 }}>
+                  AI Assist active: intent, negotiation, and trust signals are running in chat.
+                </p>
+              ) : null}
             </div>
             {!user && (
               <button

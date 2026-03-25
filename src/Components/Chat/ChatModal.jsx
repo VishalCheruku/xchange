@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { addDoc, collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore"
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage"
 import { fireStore, storage } from "../Firebase/Firebase"
+import { useAIMode } from "../Context/AIMode"
+import { deriveAIVisibility, useAISuggestionGuard } from "../../hooks/useAIModeBehavior"
 
 /* ─── tiny helpers ─────────────────────────────────────────────────── */
 const fmt = (ts) => {
@@ -56,6 +58,17 @@ const ACTION_CHIPS = [
 ]
 
 /* ══════════════════════════════════════════════════════════════════ */
+const toPercent = (value) => (Number.isFinite(value) ? `${Math.round(value * 100)}%` : "--")
+
+const extractOfferFromText = (text = "") => {
+  const lowered = String(text || "").toLowerCase()
+  if (!/(offer|price|rs|₹|final)/i.test(lowered)) return null
+  const match = lowered.match(/(\d{2,7}(?:\.\d+)?)/)
+  if (!match) return null
+  const amount = Number(match[1])
+  return Number.isFinite(amount) ? amount : null
+}
+
 const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdProp }) => {
   const [text, setText] = useState("")
   const [messages, setMessages] = useState([])
@@ -67,6 +80,16 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
   const [imgPreview, setImgPreview] = useState(null)   // lightbox
   const [pendingFile, setPendingFile] = useState(null)  // staged image
   const [pendingPreview, setPendingPreview] = useState(null)
+  const [aiChatInsight, setAIChatInsight] = useState(null)
+  const [aiError, setAIError] = useState(null)
+  const [lastAnalyzedMessageId, setLastAnalyzedMessageId] = useState(null)
+  const {
+    aiModeEnabled,
+    toneGuardEnabled,
+    setToneGuardEnabled,
+    requestRealtimeInsight,
+    trackAdaptiveInteraction,
+  } = useAIMode()
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const emojiRef = useRef(null)
@@ -74,6 +97,26 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
   const sellerId = item?.userId || convMeta?.sellerId || (convMeta?.participants || []).find((p) => p !== user?.uid) || null
   const participantKey = sellerId && user ? [sellerId, user.uid].sort().join("_") : null
   const conversationId = conversationIdProp || (item && user && participantKey ? `${item.id}_${participantKey}` : null)
+
+  const aiQuickSuggestionsRaw = useMemo(() => aiChatInsight?.conversation?.suggestions?.nextReplies || [], [aiChatInsight])
+  const aiQuickSuggestions = useAISuggestionGuard({
+    suggestions: aiQuickSuggestionsRaw,
+    scopeKey: conversationId || "global",
+    cooldownMs: 90000,
+    maxSuggestions: 2,
+  })
+  const aiVisibility = useMemo(
+    () => deriveAIVisibility({ aiModeEnabled, insight: aiChatInsight }),
+    [aiModeEnabled, aiChatInsight],
+  )
+
+  const applyLocalToneGuard = (rawText) => {
+    if (!toneGuardEnabled) return rawText
+    const harsh = /\b(stupid|idiot|nonsense|shut up)\b/gi
+    if (!harsh.test(rawText)) return rawText
+    const cleaned = rawText.replace(harsh, "").replace(/\s{2,}/g, " ").trim()
+    return `Please clarify this for me. ${cleaned}`.trim()
+  }
 
   /* close emoji on outside click */
   useEffect(() => {
@@ -84,6 +127,19 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
   }, [showEmojis])
 
   useEffect(() => { setMessages([]) }, [conversationId])
+
+  useEffect(() => {
+    if (!aiModeEnabled || !open || !conversationId || !user?.uid || !item?.id) return
+    trackAdaptiveInteraction({
+      userId: user.uid,
+      interactionType: 'open_chat',
+      listing: {
+        id: item.id,
+        category: item.category,
+        price: item.price,
+      },
+    }).catch(() => {})
+  }, [aiModeEnabled, open, conversationId, user?.uid, item?.id, item?.category, item?.price, trackAdaptiveInteraction])
 
   /* create conversation meta */
   useEffect(() => {
@@ -140,6 +196,64 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
     updateDoc(doc(fireStore, "conversations", conversationId), { [`lastRead.${user.uid}`]: serverTimestamp() }).catch(() => {})
   }, [messages.length, open, conversationId, user])
 
+  useEffect(() => {
+    if (!aiModeEnabled || !open || !conversationId || !user || messages.length === 0) return
+    const lastMsg = messages[messages.length - 1]
+    if (!lastMsg?.id || lastMsg.id === lastAnalyzedMessageId) return
+    setLastAnalyzedMessageId(lastMsg.id)
+    setAIError(null)
+    const chatHistory = messages.slice(-12).map((entry) => ({
+      senderId: entry.senderId,
+      text: entry.text || (entry.imageUrl ? "Image shared" : ""),
+      createdAtMs: entry.createdAt?.toMillis?.() || null,
+    }))
+    const chatOffers = chatHistory
+      .map((entry) => extractOfferFromText(entry.text))
+      .filter((amount) => Number.isFinite(amount))
+      .map((amount) => ({ amount }))
+    const latestMessage = lastMsg.text || (lastMsg.imageUrl ? "Image shared" : "")
+    const incomingOfferAmount = extractOfferFromText(latestMessage)
+    const responseConsistency = chatHistory.length >= 8 ? 0.78 : chatHistory.length >= 4 ? 0.66 : 0.55
+
+    requestRealtimeInsight(
+      {
+        userId: user.uid,
+        conversationId,
+        message: latestMessage,
+        latestMessage,
+        history: chatHistory,
+        chatHistory,
+        listing: {
+          id: item?.id,
+          title: item?.title,
+          category: item?.category,
+          price: Number(item?.price),
+          description: item?.description,
+          imageUrl: item?.imageUrl,
+          images: Array.isArray(item?.images) ? item.images : [],
+          videoUrl: item?.videoUrl || null,
+        },
+        comparablePrices: [],
+        offers: chatOffers,
+        incomingOffer: Number.isFinite(incomingOfferAmount) ? { amount: incomingOfferAmount } : null,
+        profile: {
+          completeness: item?.userName ? 0.8 : 0.6,
+        },
+        behavior: {
+          responseConsistency,
+          pastReports: 0,
+        },
+      },
+      (result, error) => {
+        if (error) {
+          setAIError(error)
+          return
+        }
+        setAIChatInsight(result || null)
+      },
+    )
+  }, [aiModeEnabled, open, conversationId, user, messages, lastAnalyzedMessageId, requestRealtimeInsight, item?.id, item?.title, item?.category, item?.price, item?.description])
+
   /* typing + conv meta */
   useEffect(() => {
     if (!conversationId || !user) return
@@ -172,7 +286,8 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
 
   /* ── send ── */
   const sendMessage = async ({ imageUrl, overrideText } = {}) => {
-    const bodyText = (overrideText ?? text).trim()
+    const rawText = (overrideText ?? text).trim()
+    const bodyText = imageUrl ? rawText : applyLocalToneGuard(rawText)
     if (!user || (!bodyText && !imageUrl) || !conversationId) return
     const otherParticipant = (convMeta?.participants || []).find((p) => p !== user.uid) || (sellerId !== user.uid ? sellerId : null)
     const buyerIdResolved = sellerId && otherParticipant ? (user.uid === sellerId ? otherParticipant : user.uid) : (convMeta?.buyerId || user.uid)
@@ -342,16 +457,25 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
 
           {/* ══ MESSAGES ══ */}
           <div
-            className="cm-scroll"
             style={{
-              overflowY: "auto", padding: "16px 20px",
-              display: "flex", flexDirection: "column", gap: 2,
-              backgroundImage: `
-                radial-gradient(ellipse 60% 40% at 20% 80%, rgba(14,165,233,0.04) 0%, transparent 70%),
-                radial-gradient(ellipse 40% 30% at 80% 20%, rgba(99,102,241,0.04) 0%, transparent 70%)
-              `,
+              minHeight: 0,
+              display: "grid",
+              gridTemplateColumns: aiModeEnabled && aiVisibility.showDealSidebar && aiChatInsight?.deal
+                ? "1fr minmax(220px,260px)"
+                : "1fr",
             }}
           >
+            <div
+              className="cm-scroll"
+              style={{
+                overflowY: "auto", padding: "16px 20px",
+                display: "flex", flexDirection: "column", gap: 2,
+                backgroundImage: `
+                  radial-gradient(ellipse 60% 40% at 20% 80%, rgba(14,165,233,0.04) 0%, transparent 70%),
+                  radial-gradient(ellipse 40% 30% at 80% 20%, rgba(99,102,241,0.04) 0%, transparent 70%)
+                `,
+              }}
+            >
             {messages.length === 0 && (
               <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 0", gap: 12 }}>
                 <div style={{ fontSize: 42 }}>👋</div>
@@ -441,12 +565,113 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
 
             <div ref={bottomRef} />
           </div>
+          {aiModeEnabled && aiVisibility.showDealSidebar && aiChatInsight?.deal ? (
+            <aside
+              style={{
+                borderLeft: "1px solid rgba(255,255,255,.08)",
+                background: "rgba(255,255,255,0.03)",
+                padding: "14px 12px",
+                overflowY: "auto",
+                display: "grid",
+                alignContent: "start",
+                gap: 10,
+              }}
+            >
+              <p className="ai-chat-label">Deal Sidebar</p>
+              <span className="ai-chat-pill">Price: {aiChatInsight.deal.priceEvaluation || "--"}</span>
+              <span className="ai-chat-pill">Close: {toPercent(aiChatInsight.deal?.dealSuccess?.closeProbability)}</span>
+              <span className="ai-chat-pill">
+                Time: {aiChatInsight.deal?.dealSuccess?.timeToCloseHours ?? aiChatInsight.deal?.dealSuccess?.etaHours ?? "--"}h
+              </span>
+              <span className="ai-chat-pill">Momentum: {aiChatInsight.deal?.dealMomentum || "--"}</span>
+              <div className="ai-chat-side-card">
+                <p className="ai-chat-side-title">Price insights</p>
+                <p className="ai-chat-side-line">Fast sale: Rs {aiChatInsight.deal?.multiScenarioPricing?.fastSale ?? "--"}</p>
+                <p className="ai-chat-side-line">Balanced: Rs {aiChatInsight.deal?.multiScenarioPricing?.balanced ?? "--"}</p>
+                <p className="ai-chat-side-line">Max profit: Rs {aiChatInsight.deal?.multiScenarioPricing?.maxProfit ?? "--"}</p>
+              </div>
+              {aiChatInsight.deal?.offerQuality ? (
+                <div className="ai-chat-side-card">
+                  <p className="ai-chat-side-title">Offer score</p>
+                  <p className="ai-chat-side-line">Fairness: {Math.round((aiChatInsight.deal.offerQuality.fairness || 0) * 100)}%</p>
+                  <p className="ai-chat-side-line">Seriousness: {Math.round((aiChatInsight.deal.offerQuality.seriousness || 0) * 100)}%</p>
+                  <p className="ai-chat-side-line">Closure: {Math.round((aiChatInsight.deal.offerQuality.likelihoodToClose || 0) * 100)}%</p>
+                </div>
+              ) : null}
+              {Array.isArray(aiChatInsight.deal?.structuredNegotiationGuidance) ? (
+                <div className="ai-chat-side-card">
+                  <p className="ai-chat-side-title">Negotiation flow</p>
+                  <p className="ai-chat-side-line">
+                    {aiChatInsight.deal.structuredNegotiationGuidance.join(" -> ")}
+                  </p>
+                  {aiChatInsight.deal?.negotiationSuggestions?.hint ? (
+                    <p className="ai-chat-side-line">{aiChatInsight.deal.negotiationSuggestions.hint}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </aside>
+          ) : null}
+          </div>
 
           {/* ══ FOOTER ══ */}
           <div style={{ borderTop: "1px solid rgba(255,255,255,.06)", background: "rgba(255,255,255,.02)" }}>
+            {aiModeEnabled && aiVisibility.showAssistBar ? (
+              <div style={{ padding: "10px 16px 2px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="ai-chat-label">AI Assist</span>
+                  {aiChatInsight?.conversation?.intent
+                  && String(aiChatInsight.conversation.intent).toLowerCase() !== "casual" ? (
+                    <span className="ai-chat-pill">Intent: {aiChatInsight.conversation.intent}</span>
+                  ) : null}
+                  {aiChatInsight?.conversation?.tone
+                  && String(aiChatInsight.conversation.tone).toLowerCase() !== "serious" ? (
+                    <span className="ai-chat-pill">Tone: {aiChatInsight.conversation.tone}</span>
+                  ) : null}
+                  {(Number(aiChatInsight?.conversation?.commitmentScore) >= 70
+                  || Number(aiChatInsight?.conversation?.commitmentScore) <= 35) ? (
+                    <span className="ai-chat-pill">
+                      Commitment: {aiChatInsight?.conversation?.commitmentScore ?? "--"}
+                    </span>
+                  ) : null}
+                  {aiVisibility.showRiskSignals && aiChatInsight?.trust?.riskAlert ? (
+                    <span className="ai-chat-pill">{aiChatInsight.trust.riskAlert}</span>
+                  ) : null}
+                  {aiVisibility.showRiskSignals && Array.isArray(aiChatInsight?.trust?.warnings)
+                    ? aiChatInsight.trust.warnings.slice(0, 1).map((warning) => (
+                      <span key={warning} className="ai-chat-pill">{warning}</span>
+                    ))
+                    : null}
+                </div>
+                {aiChatInsight?.conversation?.suggestion ? (
+                  <p className="ai-chat-note">Suggested next reply: {aiChatInsight.conversation.suggestion}</p>
+                ) : aiChatInsight?.conversation?.suggestions?.clarificationPrompt ? (
+                  <p className="ai-chat-note">{aiChatInsight.conversation.suggestions.clarificationPrompt}</p>
+                ) : null}
+                {aiChatInsight?.systemGoal?.priorityActions?.[0]?.action ? (
+                  <p className="ai-chat-note">AI Priority: {aiChatInsight.systemGoal.priorityActions[0].action}</p>
+                ) : null}
+                {aiError ? <p className="ai-chat-note warn">AI fallback active: {aiError}</p> : null}
+              </div>
+            ) : null}
 
             {/* Quick chips row */}
             <div style={{ padding: "10px 16px 6px", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {aiModeEnabled && aiVisibility.showAssistBar && aiQuickSuggestions.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  className="cm-chip"
+                  onClick={() => sendMessage({ overrideText: suggestion })}
+                  style={{
+                    fontSize: 12, fontWeight: 700, color: "#7dd3fc",
+                    background: "rgba(14,165,233,.15)",
+                    border: "1px solid rgba(14,165,233,.3)",
+                    borderRadius: 20, padding: "4px 12px", cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {suggestion}
+                </button>
+              ))}
               {QUICK.map((q) => (
                 <button
                   key={q.label}
@@ -563,6 +788,16 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
                 <input type="file" accept="image/*" style={{ display: "none" }} disabled={uploading}
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageFile(f); e.target.value = "" }} />
               </label>
+
+              {aiModeEnabled ? (
+                <button
+                  onClick={() => setToneGuardEnabled((prev) => !prev)}
+                  className={`ai-tone-toggle ${toneGuardEnabled ? "active" : ""}`}
+                  title="Tone correction before send"
+                >
+                  Tone
+                </button>
+              ) : null}
 
               {/* Text input */}
               <input

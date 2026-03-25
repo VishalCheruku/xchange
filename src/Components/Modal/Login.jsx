@@ -27,11 +27,14 @@ const Login = ({toggleModal, status}) => {
   return (
     <div>
             <Modal theme={{
-                "content": {
-                    "base": "relative w-full p-4 md:h-auto",
-                    "inner": "relative flex max-h-[92dvh] flex-col rounded-2xl bg-white shadow-lg dark:bg-gray-700 overflow-hidden"
+                "root": {
+                    "base": "fixed inset-x-0 top-0 z-[1200] h-[100dvh] overflow-y-auto overflow-x-hidden md:inset-0"
                 },
-            }} onClick={toggleModal} className="bg-black rounded-none" position={'center'} show={status} size="md" popup={true}>
+                "content": {
+                    "base": "relative w-full p-2 sm:p-4 md:h-auto",
+                    "inner": "relative flex max-h-[calc(100dvh-2rem)] flex-col rounded-2xl bg-white shadow-lg dark:bg-gray-700 overflow-hidden"
+                },
+            }} onClick={toggleModal} className="xchange-modal-layer !z-[1200] bg-black/60 backdrop-blur-sm rounded-none" position={'center'} show={status} size="md" popup={true}>
                 <div onClick={(event)=> event.stopPropagation()}   className="p-6 pb-3 pl-3 pr-3 bg-gradient-to-br from-sky-50 via-white to-white relative">
                     <img onClick={toggleModal} className="w-6 absolute z-20 top-4 right-4 cursor-pointer hover:scale-105 transition" src={close} alt="" />
                     <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_20%_20%,rgba(14,165,233,0.12),transparent_45%),radial-gradient(circle_at_80%_10%,rgba(59,130,246,0.12),transparent_40%)]" />
@@ -67,7 +70,7 @@ const Login = ({toggleModal, status}) => {
                     </Carousel>
                 </div>
 
-                <ModalBody className="bg-white h-96 p-0 rounded-none" onClick={(event)=> {event.stopPropagation()}} >
+                <ModalBody className="bg-white h-96 max-h-[calc(100dvh-2rem)] p-0 rounded-none overflow-y-auto" onClick={(event)=> {event.stopPropagation()}} >
 
                     <div className="p-6 pt-0 space-y-4">
                         <button className="flex items-center justify-start gap-3 rounded-xl border border-slate-200 bg-white p-4 relative hover:border-sky-300 hover:shadow-md transition">

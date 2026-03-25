@@ -46,3 +46,6 @@ coverage
 .eslintcache
 .nyc_output
 firebase-debug.log*
+
+# AI adaptive profile persistence
+server/data/adaptive-profiles.json

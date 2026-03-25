@@ -333,6 +333,37 @@ li{
     box-shadow: 0 16px 32px rgba(14,165,233,0.2);
 }
 
+.nav-ai-btn{
+    padding: 0.55rem 1rem;
+    border-radius: 999px;
+    border: 1px solid rgba(15,23,42,0.14);
+    background: #ffffff;
+    color: #0f172a;
+    font-weight: 800;
+    font-size: 0.74rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: all 180ms ease;
+    box-shadow: 0 8px 18px rgba(15,23,42,0.1);
+}
+
+.nav-ai-btn:hover{
+    transform: translateY(-1px);
+}
+
+.nav-ai-btn.active{
+    color: #ecfeff;
+    background: linear-gradient(130deg, #0f172a, #0369a1, #0f172a);
+    border-color: rgba(14,165,233,0.45);
+    box-shadow: 0 0 0 2px rgba(14,165,233,0.18), 0 10px 24px rgba(2,132,199,0.28);
+}
+
+.ai-pill{
+    background: linear-gradient(135deg, rgba(2,132,199,0.14), rgba(15,23,42,0.08));
+    border: 1px solid rgba(2,132,199,0.25);
+    color: #075985;
+}
+
 .xchange-spin{
     animation: xchange-float 6s ease-in-out infinite;
 }

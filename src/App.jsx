@@ -6,10 +6,12 @@ import Profile from './Components/Pages/Profile'
 import Search from './Components/Pages/Search'
 import AdminPanel from './Components/Pages/AdminPanel'
 import Chat from './Components/Pages/Chat'
+import AIModeIndicator from './Components/AI/AIModeIndicator'
 
 const App = () => {
   return (
    <>
+     <AIModeIndicator />
      <Routes>
       <Route  path='/' element={<Home/>}/>
       <Route  path='/details/:id' element={<Details/>}/>

@@ -9,6 +9,9 @@ import { auth, fireStore } from "../Firebase/Firebase";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { addDoc, collection, doc, onSnapshot, query, updateDoc, where, setDoc, serverTimestamp } from "firebase/firestore";
 import ChatModal from "../Chat/ChatModal";
+import { useAIMode } from "../Context/AIMode";
+import DealInsightsPanel from "../AI/DealInsightsPanel";
+import TrustBanner from "../AI/TrustBanner";
 
 const Details = () => {
   const location = useLocation();
@@ -40,9 +43,12 @@ const Details = () => {
   const [deleting, setDeleting] = useState(false)
   const itemsCtx= ItemsContext();
   const [user] = useAuthState(auth)
+  const { aiModeEnabled, analyzeMarketplaceContext, trackAdaptiveInteraction } = useAIMode()
   const isOwner = user && item?.userId && user.uid === item.userId
   const offerSectionRef = useRef(null)
   const [notFound, setNotFound] = useState(false)
+  const [aiInsights, setAIInsights] = useState(null)
+  const [aiLoading, setAILoading] = useState(false)
   const conversationId = item && user ? `${item.id}_${[item.userId, user.uid].sort().join('_')}` : null
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }) }, [item?.id])
 
@@ -145,6 +151,60 @@ const Details = () => {
     return () => unsub()
   }, [item?.id])
 
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      if (!aiModeEnabled || !item?.id) {
+        setAIInsights(null)
+        return
+      }
+      setAILoading(true)
+      const comparablePrices = (itemsCtx.items || [])
+        .filter((entry) => entry.category === item.category && entry.id !== item.id)
+        .map((entry) => Number(entry.price))
+        .filter((n) => Number.isFinite(n))
+      const incomingOffer = offers.length > 0 ? { amount: offers[0]?.amount } : { amount: Number(offerValue || 0) || null }
+
+      const result = await analyzeMarketplaceContext({
+        userId: user?.uid || 'anonymous',
+        conversationId,
+        message: offers[0] ? `Offer: Rs ${offers[0].amount}` : '',
+        listing: {
+          id: item.id,
+          title: item.title,
+          category: item.category,
+          price: Number(item.price),
+          description: item.description,
+          imageUrl: item.imageUrl,
+          images: Array.isArray(item.images) ? item.images : [],
+          videoUrl: item.videoUrl || null,
+        },
+        comparablePrices,
+        offers: offers.map((offer) => ({ amount: Number(offer.amount), status: offer.status })),
+        incomingOffer,
+        behavior: {
+          responseConsistency: 0.7,
+          pastReports: 0,
+        },
+        profile: {
+          completeness: item?.userName ? 0.8 : 0.55,
+        },
+      })
+      if (cancelled) return
+      setAIInsights(result)
+      setAILoading(false)
+    }
+
+    run().catch((error) => {
+      console.warn('AI insights unavailable in details page:', error)
+      if (!cancelled) setAILoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [aiModeEnabled, analyzeMarketplaceContext, item?.id, item?.category, item?.description, item?.price, item?.title, item?.userName, offers, offerValue, itemsCtx.items, user?.uid, conversationId])
+
   const handleSave = () => {
     const currentId = item?.id
     if (!currentId) return
@@ -210,6 +270,23 @@ const Details = () => {
         createdAt: serverTimestamp(),
       })
       setOfferValue('')
+      if (aiModeEnabled && user?.uid) {
+        trackAdaptiveInteraction({
+          userId: user.uid,
+          interactionType: 'offer',
+          listing: {
+            id: item.id,
+            category: item.category,
+            price: item.price,
+          },
+          transaction: {
+            status: 'pending',
+            category: item.category,
+            price: amount,
+            suspicious: false,
+          },
+        }).catch(() => {})
+      }
       alert('Offer sent to the seller.')
     } catch (err) {
       console.error(err)
@@ -237,6 +314,23 @@ const Details = () => {
           unread: true,
           read: false,
         })
+        if (aiModeEnabled && user?.uid) {
+          trackAdaptiveInteraction({
+            userId: user.uid,
+            interactionType: 'offer',
+            listing: {
+              id: item.id,
+              category: item.category,
+              price: item.price,
+            },
+            transaction: {
+              status: nextStatus,
+              category: item.category,
+              price: offer.amount,
+              suspicious: false,
+            },
+          }).catch(() => {})
+        }
       }
     } catch (err) {
       console.error(err)
@@ -273,6 +367,15 @@ const Details = () => {
   const avgRating = reviews.length
     ? (reviews.reduce((sum, r) => sum + (Number(r.rating) || 0), 0) / reviews.length).toFixed(1)
     : null
+
+  const scoreOfferClient = (amount) => {
+    const offer = Number(amount)
+    const listPrice = Number(item?.price)
+    if (!Number.isFinite(offer) || !Number.isFinite(listPrice) || listPrice <= 0) return null
+    const ratio = offer / listPrice
+    const score = Math.max(0, Math.min(100, Math.round((1 - Math.abs(1 - ratio)) * 100)))
+    return score
+  }
 
   const formatDate = (value) => {
     if (!value) return ''
@@ -418,6 +521,18 @@ const Details = () => {
                     <span className="px-3 py-1 rounded-full bg-sky-100 text-sky-700">{sellerStats.total} listings live</span>
                     {reviews.length > 0 ? <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-700">{reviews.length} recent reviews</span> : null}
                   </div>
+                  {aiModeEnabled ? (
+                    <div className="mt-4 space-y-3">
+                      {aiLoading ? <p className="text-sm text-slate-500">Analyzing deal and trust signals...</p> : null}
+                      <DealInsightsPanel insight={aiInsights?.deal} />
+                      <TrustBanner insight={aiInsights?.trust} />
+                      {aiInsights?.systemGoal?.priorityActions?.[0]?.action ? (
+                        <p className="text-sm text-slate-600">
+                          AI Priority: {aiInsights.systemGoal.priorityActions[0].action}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="mt-6 safety-card">
                     <p className="font-semibold">Safety tips</p>
                     <ul className="text-sm text-slate-600 list-disc list-inside">
@@ -452,6 +567,15 @@ const Details = () => {
                 />
                 <button className="xchange-btn w-full sm:w-auto" onClick={sendOffer}>Send offer</button>
               </div>
+              {aiModeEnabled && aiInsights?.deal?.structuredNegotiationGuidance ? (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  {aiInsights.deal.structuredNegotiationGuidance.map((step) => (
+                    <span key={step} className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-semibold">
+                      {step}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <div className="mt-4 space-y-3">
                 {offers.length === 0 ? (
                   <p className="text-sm text-slate-500">No offers yet. Be the first.</p>
@@ -460,6 +584,11 @@ const Details = () => {
                     <div>
                       <p className="font-semibold text-slate-900">Rs {offer.amount}</p>
                       <p className="text-xs text-slate-500">By {offer.buyerName}</p>
+                      {aiModeEnabled ? (
+                        <p className="text-xs text-slate-500 mt-1">
+                          Offer quality {scoreOfferClient(offer.amount) ?? '--'}/100
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`text-xs px-2 py-1 rounded-full ${offer.status === 'pending' ? 'bg-amber-100 text-amber-700' : offer.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>

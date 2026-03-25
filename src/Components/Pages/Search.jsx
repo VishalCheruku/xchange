@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import Navbar from '../Navbar/Navbar'
 import { ItemsContext } from '../Context/Item'
 import Card from '../Card/Card'
@@ -6,9 +7,16 @@ import semanticRank from '../../utils/semanticSearch'
 
 const Search = () => {
   const itemsCtx = ItemsContext()
+  const [searchParams] = useSearchParams()
   const [queryText, setQueryText] = useState('')
   const [imageUrlHint, setImageUrlHint] = useState('')
   const [uploadPreview, setUploadPreview] = useState('')
+
+  useEffect(() => {
+    const queryFromUrl = String(searchParams.get('q') || '').trim()
+    if (!queryFromUrl) return
+    setQueryText(queryFromUrl)
+  }, [searchParams])
 
   const results = useMemo(() => {
     const ranked = semanticRank(itemsCtx.items || [], { queryText, imageUrlHint: imageUrlHint || uploadPreview })

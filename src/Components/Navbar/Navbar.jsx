@@ -1,6 +1,5 @@
 import './Navbar.css'
 import logo from '../../assets/xchange-symbol.svg'
-import search from '../../assets/search1.svg'
 import arrow from '../../assets/arrow-down.svg'
 import searchWt from '../../assets/search.svg'
 import { useAuthState } from 'react-firebase-hooks/auth'
@@ -12,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { signOut } from 'firebase/auth'
 import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore'
 import { ItemsContext } from '../Context/Item'
+import { useAIMode } from '../Context/AIMode'
 
 const Navbar = (props) => {
     const [user] = useAuthState(auth)
@@ -25,11 +25,18 @@ const Navbar = (props) => {
     const menuRef = useRef(null)
     const notifRef = useRef(null)
     const {
-        toggleModal = () => {},
-        toggleModalSell = () => {},
-        searchQuery = '',
-        onSearchChange = () => {},
+        toggleModal,
+        toggleModalSell,
+        searchQuery,
+        onSearchChange,
+        onSearchSubmit,
     } = props
+    const safeToggleModal = toggleModal || (() => {})
+    const safeToggleModalSell = toggleModalSell || (() => {})
+    const hasControlledSearch = typeof searchQuery === 'string' && typeof onSearchChange === 'function'
+    const [internalSearch, setInternalSearch] = useState('')
+    const searchValue = hasControlledSearch ? searchQuery : internalSearch
+    const { aiModeEnabled, toggleAIMode } = useAIMode()
     const itemsCtx = ItemsContext() || { items: [] }
     const categories = useMemo(() => {
       const set = new Set((itemsCtx.items || []).map((it) => it.category).filter(Boolean))
@@ -106,7 +113,7 @@ const Navbar = (props) => {
 
     const handleProfileClick = () => {
       if (!user) {
-        toggleModal()
+        safeToggleModal()
         return
       }
       setMenuOpen((prev) => !prev)
@@ -144,6 +151,29 @@ const Navbar = (props) => {
       }
     }
 
+    const handleSearchValueChange = (value) => {
+      if (hasControlledSearch) {
+        onSearchChange(value)
+        return
+      }
+      setInternalSearch(value)
+    }
+
+    const handleSearch = (event) => {
+      event.preventDefault()
+      const queryValue = String(searchValue || '').trim()
+
+      if (hasControlledSearch) {
+        onSearchSubmit?.(queryValue)
+        if (!onSearchSubmit) {
+          navigate(queryValue ? `/search?q=${encodeURIComponent(queryValue)}` : '/search')
+        }
+        return
+      }
+
+      navigate(queryValue ? `/search?q=${encodeURIComponent(queryValue)}` : '/search')
+    }
+
   return (
     <div>
            <nav className="fixed z-50 w-full overflow-visible p-4 shadow-md bg-slate-100 border-b-4 border-solid border-b-white nav-shell">
@@ -156,21 +186,33 @@ const Navbar = (props) => {
                 </Link>
 
                 <div className="nav-search">
-                    <div className="relative w-full main-search">
+                    <form className="relative w-full main-search" onSubmit={handleSearch}>
                         <input
-                            value={searchQuery}
-                            onChange={(event) => onSearchChange(event.target.value)}
+                            value={searchValue}
+                            onChange={(event) => handleSearchValueChange(event.target.value)}
                             placeholder='Find laptops, furniture, gadgets, and more...'
                             className='w-full p-3 border-sky-300 border-solid border-2 rounded-md placeholder:text-ellipsis focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
                             type="text"
                         />
-                        <div style={{ backgroundColor: '#6dc8e6' }} className="flex justify-center items-center absolute top-0 right-0 h-full rounded-e-md w-12">
+                        <button
+                          type="submit"
+                          aria-label="Search listings"
+                          style={{ backgroundColor: '#6dc8e6' }}
+                          className="flex justify-center items-center absolute top-0 right-0 h-full rounded-e-md w-12"
+                        >
                             <img className="w-5 filter invert" src={searchWt} alt="Search Icon" />
-                        </div>
-                    </div>
+                        </button>
+                    </form>
                 </div>
 
                 <div className="nav-actions">
+                    <button
+                      className={`nav-ai-btn ${aiModeEnabled ? 'active' : ''}`}
+                      onClick={toggleAIMode}
+                      aria-label="Go AI Mode"
+                    >
+                      Go AI Mode
+                    </button>
                     <Link to="/" className="nav-home" aria-label="Home">
                       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M3 11l9-8 9 8" />
@@ -234,17 +276,17 @@ const Navbar = (props) => {
                             </div>
                           )}
                         </div>
-                        <button className="nav-sell" onClick={toggleModalSell} aria-label="Sell item">
+                        <button className="nav-sell" onClick={safeToggleModalSell} aria-label="Sell item">
                             <img src={addBtn} alt="" />
                             <span>Sell</span>
                         </button>
                       </>
                     ) : (
                       <>
-                        <button className="nav-login" onClick={toggleModal} aria-label="Open login">
+                        <button className="nav-login" onClick={safeToggleModal} aria-label="Open login">
                           Sign in / Login
                         </button>
-                        <button className="nav-sell" onClick={toggleModal} aria-label="Sell item (login first)">
+                        <button className="nav-sell" onClick={safeToggleModal} aria-label="Sell item (login first)">
                             <img src={addBtn} alt="" />
                             <span>Sell</span>
                         </button>
@@ -264,6 +306,11 @@ const Navbar = (props) => {
                         <p  className='font-semibold uppercase all-cats'>Categories</p>
                         <img className='w-4 ml-2' src={arrow} alt="" />
                     </div>
+                    {aiModeEnabled ? (
+                      <li>
+                        <span className="cat-pill ai-pill">AI Assist Active</span>
+                      </li>
+                    ) : null}
                     {categories.map((category) => (
                       <li key={category}>
                         <Link to={`/category/${encodeURIComponent(category)}`} className="cat-pill">

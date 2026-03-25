@@ -14,6 +14,8 @@ const Card = ({
   onViewItem,
   emptyMessage = 'No listings yet.',
   compact = false,
+  aiMode = false,
+  aiHintsByItem = {},
 }) => {
   return (
     <div className={`py-10 px-4 sm:px-8 md:px-12 lg:px-20 ${compact ? '' : 'min-h-screen'}`}>
@@ -61,6 +63,14 @@ const Card = ({
                 <p className="text-sm pt-2 text-slate-500">{item.category}</p>
                 <p className="pt-2 font-semibold text-slate-800">{item.title}</p>
                 <p className="pt-1 text-xs text-slate-500 line-clamp-2">{item.description}</p>
+                {aiMode && aiHintsByItem?.[item.id] ? (
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                    <span className={`ai-mini-chip ${aiHintsByItem[item.id].dealTag}`}>
+                      {aiHintsByItem[item.id].dealTag}
+                    </span>
+                    <span className="ai-mini-chip trust">Trust {aiHintsByItem[item.id].trustScore}</span>
+                  </div>
+                ) : null}
 
                 <button
                   className={`absolute flex justify-center items-center p-2 bg-white rounded-full top-3 right-3 cursor-pointer shadow-sm ${favorites.has(item.id) ? 'ring-2 ring-cyan-300' : ''}`}

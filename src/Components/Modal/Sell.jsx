@@ -215,12 +215,15 @@ const Sell = (props) => {
   return (
     <div>
         <Modal  theme={{
-             "content": {
-                "base": "relative w-full p-4 md:h-auto",
-                "inner": "relative flex max-h-[92dvh] max-w-[900px] w-full mx-auto flex-col rounded-3xl bg-white shadow-2xl overflow-hidden"
+            "root": {
+                "base": "fixed inset-x-0 top-0 z-[1200] h-[100dvh] overflow-y-auto overflow-x-hidden md:inset-0"
             },
-        }}  onClick={toggleModalSell} show={status}  className="bg-black"  position={'center'}  size="xl" popup= {true}>
-            <ModalBody  className="bg-gradient-to-br from-sky-50 via-white to-white p-0 rounded-3xl h-full overflow-auto"   onClick={(event) => event.stopPropagation()}>
+             "content": {
+                "base": "relative w-full p-2 sm:p-4 md:h-auto",
+                "inner": "relative flex max-h-[calc(100dvh-2rem)] max-w-[900px] w-full mx-auto flex-col rounded-3xl bg-white shadow-2xl overflow-hidden"
+            },
+        }}  onClick={toggleModalSell} show={status}  className="xchange-modal-layer !z-[1200] bg-black/60 backdrop-blur-sm"  position={'center'}  size="xl" popup= {true}>
+            <ModalBody  className="bg-gradient-to-br from-sky-50 via-white to-white p-0 rounded-3xl h-full max-h-[calc(100dvh-2rem)] overflow-y-auto"   onClick={(event) => event.stopPropagation()}>
                 <img 
                 onClick={()=>{
                     toggleModalSell();
