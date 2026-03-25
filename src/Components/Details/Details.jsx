@@ -1,18 +1,21 @@
 import Navbar from "../Navbar/Navbar"
-import { useLocation } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useLocation, useParams, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { ItemsContext } from '../Context/Item';
 import Login from "../Modal/Login";
 import Sell from "../Modal/Sell";
 import Card from "../Card/Card";
 import { auth, fireStore } from "../Firebase/Firebase";
 import { useAuthState } from "react-firebase-hooks/auth";
-import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where, setDoc } from "firebase/firestore";
+import { addDoc, collection, doc, onSnapshot, query, updateDoc, where, setDoc, serverTimestamp } from "firebase/firestore";
 import ChatModal from "../Chat/ChatModal";
 
 const Details = () => {
-  const location = useLocation(); 
-  const { item } = location.state || {}; 
+  const location = useLocation();
+  const params = useParams();
+  const navigate = useNavigate();
+  const locationItem = (location.state || {}).item;
+  const [item, setItem] = useState(locationItem || null);
 
   const [openModal, setModal] = useState(false);
   const [openModalSell, setModalSell] = useState(false);
@@ -22,6 +25,7 @@ const Details = () => {
   const [reviews, setReviews] = useState([])
   const [reviewText, setReviewText] = useState('')
   const [rating, setRating] = useState(5)
+  const [showReviews, setShowReviews] = useState(true)
   const [openChat, setOpenChat] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [currentTitle, setCurrentTitle] = useState(item?.title || '')
@@ -33,13 +37,68 @@ const Details = () => {
   const [editPrice, setEditPrice] = useState(item?.price || '')
   const [editDescription, setEditDescription] = useState(item?.description || '')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const itemsCtx= ItemsContext();
   const [user] = useAuthState(auth)
   const isOwner = user && item?.userId && user.uid === item.userId
+  const offerSectionRef = useRef(null)
+  const [notFound, setNotFound] = useState(false)
+  const conversationId = item && user ? `${item.id}_${[item.userId, user.uid].sort().join('_')}` : null
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }) }, [item?.id])
+
+  const priceStats = useMemo(() => {
+    const items = itemsCtx.items || []
+    const catItems = items.filter((it) => it.category === item?.category)
+    const nums = catItems.map((it) => Number(String(it.price || '').replace(/[^\d.]/g, ''))).filter((n) => Number.isFinite(n))
+    if (nums.length === 0) return null
+    const sorted = nums.sort((a, b) => a - b)
+    const median = sorted[Math.floor(sorted.length / 2)]
+    const p25 = sorted[Math.floor(sorted.length * 0.25)]
+    const p75 = sorted[Math.floor(sorted.length * 0.75)]
+    return { median, p25, p75 }
+  }, [itemsCtx.items, item?.category])
+
+  const bundleItems = useMemo(() => {
+    const items = itemsCtx.items || []
+    if (!item?.userId) return []
+    return items.filter((it) => it.userId === item.userId && it.id !== item.id).slice(0, 3)
+  }, [itemsCtx.items, item])
+
+  const sellerStats = useMemo(() => {
+    const items = itemsCtx.items || []
+    const sellerItems = items.filter((it) => it.userId === item?.userId)
+    const recent = sellerItems.filter((it) => {
+      const ts = new Date(it.createAt || it.createdAt || '').getTime()
+      return Date.now() - ts < 7 * 24 * 60 * 60 * 1000
+    })
+    return {
+      total: sellerItems.length,
+      recent: recent.length,
+      name: item?.userName || 'Seller'
+    }
+  }, [itemsCtx.items, item])
 
   const toggleModal = () => setModal(!openModal);
   const toggleModalSell = () => setModalSell(!openModalSell);
   const toggleChat = () => setOpenChat((prev)=>!prev)
+
+  // hydrate item from params or location
+  useEffect(() => {
+    if (locationItem) {
+      setItem(locationItem)
+      setNotFound(false)
+      return
+    }
+    if (params?.id && itemsCtx.items) {
+      const found = (itemsCtx.items || []).find((it) => String(it.id) === String(params.id))
+      if (found) {
+        setItem(found)
+        setNotFound(false)
+      } else if ((itemsCtx.items || []).length > 0) {
+        setNotFound(true)
+      }
+    }
+  }, [locationItem, params?.id, itemsCtx.items])
 
   useEffect(() => {
     if (!item?.id) return
@@ -61,24 +120,30 @@ const Details = () => {
   useEffect(() => {
     if (!item?.id) return
     const offersRef = collection(fireStore, 'offers')
-    const q = query(offersRef, where('itemId', '==', item.id), orderBy('createdAt', 'desc'))
+    const q = query(offersRef, where('itemId', '==', item.id))
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+      list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))
       setOffers(list)
     })
     return () => unsub()
   }, [item?.id])
 
   useEffect(() => {
-    if (!item?.userId) return
+    setReviews([])
+  }, [item?.id])
+
+  useEffect(() => {
+    if (!item?.id) return
     const reviewsRef = collection(fireStore, 'reviews')
-    const q = query(reviewsRef, where('sellerId', '==', item.userId), orderBy('createdAt', 'desc'))
+    const q = query(reviewsRef, where('itemId', '==', item.id))
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+      list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))
       setReviews(list)
     })
     return () => unsub()
-  }, [item?.userId])
+  }, [item?.id])
 
   const handleSave = () => {
     const currentId = item?.id
@@ -106,27 +171,73 @@ const Details = () => {
 
   const sendOffer = async () => {
     if (!user) { toggleModal(); return }
+    if (user.uid === item?.userId) { alert('You cannot make an offer on your own listing.'); return }
     const amount = Number(offerValue)
     if (!Number.isFinite(amount) || amount <= 0) return
     try {
-      await addDoc(collection(fireStore, 'offers'), {
+      const buyerName = user.displayName || user.email || 'Buyer'
+      const itemTitle = item.title || 'Listing'
+      const itemImage = item.imageUrl || (Array.isArray(item.images) ? item.images[0] : '')
+      const offerRef = await addDoc(collection(fireStore, 'offers'), {
         itemId: item.id,
         sellerId: item.userId,
         buyerId: user.uid,
-        buyerName: user.displayName || user.email || 'Buyer',
+        buyerName,
+        itemTitle,
+        itemImage,
         amount,
         status: 'pending',
-        createdAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
+      })
+      // optimistic UI
+      setOffers((prev) => [{ id: offerRef.id, itemId: item.id, sellerId: item.userId, buyerId: user.uid, buyerName, itemTitle, itemImage, amount, status: 'pending', createdAt: new Date() }, ...(prev || [])])
+      await addDoc(collection(fireStore, 'notifications'), {
+        userId: item.userId,
+        type: 'offer',
+        itemId: item.id,
+        itemTitle,
+        itemImage,
+        sellerId: item.userId,
+        buyerId: user.uid,
+        buyerName,
+        offerId: offerRef.id,
+        amount,
+        status: 'pending',
+        unread: true,
+        read: false,
+        title: `New offer on ${itemTitle}`,
+        body: `${buyerName} offered Rs ${amount}`,
+        createdAt: serverTimestamp(),
       })
       setOfferValue('')
+      alert('Offer sent to the seller.')
     } catch (err) {
       console.error(err)
+      alert('Failed to send offer. Please try again.')
     }
   }
 
   const updateOfferStatus = async (offerId, nextStatus) => {
     try {
       await updateDoc(doc(fireStore, 'offers', offerId), { status: nextStatus })
+      const offer = offers.find((o) => o.id === offerId)
+      if (offer) {
+        setOffers((prev) => prev.map((o) => o.id === offerId ? { ...o, status: nextStatus } : o))
+        await addDoc(collection(fireStore, 'notifications'), {
+          type: 'offer-status',
+          offerId,
+          itemId: item.id,
+          buyerId: offer.buyerId,
+          userId: offer.buyerId,
+          sellerId: item.userId,
+          title: `Your offer was ${nextStatus}`,
+          body: `${item.title || 'Listing'} · Rs ${offer.amount}`,
+          status: nextStatus,
+          createdAt: serverTimestamp(),
+          unread: true,
+          read: false,
+        })
+      }
     } catch (err) {
       console.error(err)
     }
@@ -136,25 +247,39 @@ const Details = () => {
     if (!user) { toggleModal(); return }
     if (!reviewText.trim()) return
     try {
-      await addDoc(collection(fireStore, 'reviews'), {
+      const payload = {
+        itemId: item.id,
+        itemRef: `products/${item.id}`,
+        itemTitle: item.title,
         sellerId: item.userId,
         sellerName: item.userName || 'Seller',
         reviewerId: user.uid,
         reviewerName: user.displayName || user.email || 'User',
         rating,
         text: reviewText.trim(),
-        createdAt: new Date().toISOString(),
-      })
+        createdAt: serverTimestamp(),
+      }
+      const docRef = await addDoc(collection(fireStore, 'reviews'), payload)
+      setReviews((prev) => [{ id: docRef.id, ...payload }, ...(prev || [])])
       setReviewText('')
       setRating(5)
+      alert('Review posted.')
     } catch (err) {
       console.error(err)
+      alert('Failed to post review. Please try again.')
     }
   }
 
   const avgRating = reviews.length
     ? (reviews.reduce((sum, r) => sum + (Number(r.rating) || 0), 0) / reviews.length).toFixed(1)
     : null
+
+  const formatDate = (value) => {
+    if (!value) return ''
+    if (value.toDate) return value.toDate().toLocaleString()
+    const asDate = new Date(value)
+    return Number.isFinite(asDate.getTime()) ? asDate.toLocaleString() : ''
+  }
 
   const saveEdits = async () => {
     if (!isOwner || !item?.id) return
@@ -179,6 +304,23 @@ const Details = () => {
     }
   }
 
+  if (!item && !notFound) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-600">
+        Loading listing…
+      </div>
+    )
+  }
+
+  if (notFound) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-700 gap-3">
+        <p className="text-xl font-semibold">Listing not found.</p>
+        <button className="xchange-btn" onClick={() => navigate('/')}>Back to home</button>
+      </div>
+    )
+  }
+
   return (
       <div>
           <Navbar toggleModalSell={toggleModalSell} toggleModal={toggleModal} />
@@ -186,7 +328,11 @@ const Details = () => {
 
           <div className="grid gap-0 sm:gap-5 grid-cols-1 sm:grid-cols-1 md:grid-cols-2 p-10 px-5 sm:px-15 md:px-30 lg:px-40">
               <div className="border-2 w-full rounded-lg flex justify-center overflow-hidden h-96 bg-white/80">
-                  <img className="object-cover w-full" src={item?.imageUrl} alt={item?.title} />
+                  {item?.videoUrl ? (
+                    <video className="w-full h-full object-cover" src={item.videoUrl} controls poster={item?.imageUrl} />
+                  ) : (
+                    <img className="object-cover w-full" src={item?.imageUrl} alt={item?.title} />
+                  )}
               </div>
               <div className="flex flex-col relative w-full">
                   <div className="flex items-start justify-between gap-3">
@@ -194,6 +340,15 @@ const Details = () => {
                       <p className="p-1 pl-0 text-2xl font-bold text-slate-900">Rs {isEditing ? editPrice : currentPrice}</p>
                       <p className="p-1 pl-0 text-base text-slate-500">{isEditing ? editCategory : currentCategory}</p>
                       <p className="p-1 pl-0 text-xl font-bold text-slate-900">{isEditing ? editTitle : currentTitle}</p>
+                      {priceStats ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600 bg-slate-100 rounded-xl px-3 py-2 w-fit shadow-inner">
+                          <span className="font-semibold text-slate-800">Price guidance:</span>
+                          <span>median Rs {priceStats.median}</span>
+                          <span className="text-emerald-700">fair band Rs {priceStats.p25}–{priceStats.p75}</span>
+                          {Number(currentPrice) < priceStats.p25 ? <span className="text-amber-600">Low — possible bargain</span> : null}
+                          {Number(currentPrice) > priceStats.p75 ? <span className="text-amber-600">High — consider negotiating</span> : null}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={handleSave} className={`favorite-toggle ${saved ? 'active' : ''}`}>
@@ -238,7 +393,7 @@ const Details = () => {
                       if (!user) { toggleModal(); return }
                       setOpenChat(true)
                     }}>Message seller</button>
-                    <button className="xchange-btn ghost">Make offer</button>
+                    <button className="xchange-btn ghost" onClick={() => offerSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}>Make offer</button>
                   </div>
                   <div className="mt-6 grid grid-cols-2 gap-3">
                     <div className="detail-card">
@@ -258,6 +413,11 @@ const Details = () => {
                       <p className="detail-value">{currentCategory}</p>
                     </div>
                   </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 font-semibold">{sellerStats.recent || 0} swaps this week</span>
+                    <span className="px-3 py-1 rounded-full bg-sky-100 text-sky-700">{sellerStats.total} listings live</span>
+                    {reviews.length > 0 ? <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-700">{reviews.length} recent reviews</span> : null}
+                  </div>
                   <div className="mt-6 safety-card">
                     <p className="font-semibold">Safety tips</p>
                     <ul className="text-sm text-slate-600 list-disc list-inside">
@@ -265,11 +425,19 @@ const Details = () => {
                       <li>Inspect items before paying.</li>
                       <li>Use cashless payments when possible.</li>
                     </ul>
+                    <div className="mt-3 text-sm text-slate-600 space-y-2">
+                      <p className="font-semibold text-slate-800">Suggested safe meetup spots</p>
+                      <div className="flex flex-wrap gap-2">
+                        <a className="px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200" href="https://www.google.com/maps/search/police+station+near+me" target="_blank" rel="noreferrer">Nearest police station</a>
+                        <a className="px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200" href="https://www.google.com/maps/search/mall+entrance+near+me" target="_blank" rel="noreferrer">Mall entrance</a>
+                        <a className="px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200" href="https://www.google.com/maps/search/cafe+near+me" target="_blank" rel="noreferrer">Busy café</a>
+                      </div>
+                    </div>
                   </div>
               </div>
           </div>
 
-          <div className="mt-8 px-5 sm:px-12 md:px-20 lg:px-32 grid gap-8 lg:grid-cols-[1fr_0.7fr]">
+          <div className="mt-8 px-5 sm:px-12 md:px-20 lg:px-32 grid gap-8 lg:grid-cols-[1fr_0.7fr]" ref={offerSectionRef}>
             <div className="stat-card">
               <div className="flex items-center justify-between">
                 <p className="section-title text-xl">Make an offer</p>
@@ -312,7 +480,15 @@ const Details = () => {
             <div className="stat-card">
               <div className="flex items-center justify-between">
                 <p className="section-title text-xl">Reviews</p>
-                {avgRating ? <p className="text-sm text-slate-600">{avgRating}★ avg</p> : null}
+                <div className="flex items-center gap-2">
+                  {avgRating ? <p className="text-sm text-slate-600">{avgRating}★ avg</p> : null}
+                  <button
+                    className="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 transition"
+                    onClick={() => setShowReviews((v) => !v)}
+                  >
+                    {showReviews ? 'Hide' : 'View'} reviews ({reviews.length})
+                  </button>
+                </div>
               </div>
               <div className="mt-3">
                 <div className="flex items-center gap-2">
@@ -320,7 +496,7 @@ const Details = () => {
                     <button
                       key={star}
                       onClick={() => setRating(star)}
-                      className={`w-8 h-8 rounded-full border ${star <= rating ? 'bg-amber-400 border-amber-400 text-white' : 'border-slate-200 text-slate-500'}`}
+                      className={`w-10 h-10 rounded-full border star-btn ${star <= rating ? 'active' : 'border-slate-200 text-slate-500 bg-white'}`}
                     >
                       ★
                     </button>
@@ -336,17 +512,24 @@ const Details = () => {
                   <button className="xchange-btn" onClick={submitReview}>Post review</button>
                 </div>
               </div>
-              <div className="mt-4 space-y-3 max-h-72 overflow-auto pr-1">
+              <div className={`mt-4 space-y-3 pr-1 review-collapse ${showReviews ? 'open' : ''}`}>
                 {reviews.length === 0 ? (
                   <p className="text-sm text-slate-500">No reviews yet.</p>
                 ) : reviews.map((rev) => (
-                  <div key={rev.id} className="detail-card">
+                  <div key={rev.id} className="detail-card review-card-animated shadow-sm border border-slate-100">
                     <div className="flex items-center justify-between">
-                      <p className="font-semibold text-slate-900">{rev.reviewerName}</p>
-                      <span className="text-amber-500 font-semibold">{rev.rating}★</span>
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center font-semibold">
+                          {String(rev.reviewerName || 'U').slice(0,2).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900 leading-tight">{rev.reviewerName}</p>
+                          <p className="text-[11px] text-slate-500">{formatDate(rev.createdAt)}</p>
+                        </div>
+                      </div>
+                      <span className="text-amber-500 font-semibold text-sm px-3 py-1 bg-amber-50 rounded-full">{rev.rating}★</span>
                     </div>
-                    <p className="text-sm text-slate-600 mt-1">{rev.text}</p>
-                    <p className="text-xs text-slate-400 mt-1">{new Date(rev.createdAt).toLocaleString()}</p>
+                    <p className="text-sm text-slate-600 mt-2 leading-relaxed">{rev.text}</p>
                   </div>
                 ))}
               </div>
@@ -363,6 +546,22 @@ const Details = () => {
             />
           ) : null}
 
+          {bundleItems.length > 0 ? (
+            <Card
+              items={bundleItems}
+              title="Bundle from this seller"
+              subtitle="Add these to save time at pickup."
+              viewMode="grid"
+              compact
+            />
+          ) : null}
+          {bundleItems.length >= 2 ? (
+            <div className="mt-3 bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl px-4 py-3 text-sm flex flex-wrap gap-2 items-center">
+              <span className="font-semibold">Bundle & save:</span>
+              <span>Grab these together and offer ~8% less than combined price for a quick yes.</span>
+            </div>
+          ) : null}
+
           {confirmDelete ? (
             <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 backdrop-blur-sm">
               <div className="bg-white rounded-2xl p-6 w-80 shadow-2xl text-slate-900">
@@ -372,25 +571,30 @@ const Details = () => {
                   <button className="favorite-toggle ghost" onClick={() => setConfirmDelete(false)}>Cancel</button>
                   <button
                     className="favorite-toggle danger"
+                    disabled={deleting}
                     onClick={async () => {
+                      if (deleting) return
+                      setDeleting(true)
                       try {
-                        await deleteDoc(doc(fireStore, 'products', item.id))
-                        itemsCtx.setItems((prev) => (prev || []).filter((it) => it.id !== item.id))
+                        await itemsCtx.deleteItem(item.id)
                         setConfirmDelete(false)
-                        window.history.back()
+                        navigate('/')
                       } catch (err) {
                         console.error(err)
+                        alert('Failed to delete. Please try again.')
+                      } finally {
+                        setDeleting(false)
                       }
                     }}
                   >
-                    Delete
+                    {deleting ? 'Deleting…' : 'Delete'}
                   </button>
                 </div>
               </div>
             </div>
           ) : null}
 
-          <ChatModal open={openChat} onClose={() => setOpenChat(false)} item={item} user={user} />
+          <ChatModal open={openChat} onClose={() => setOpenChat(false)} item={item} user={user} conversationId={conversationId} />
           <Sell setItems={(itemsCtx ).setItems} toggleModal={toggleModalSell} status={openModalSell} />
       </div>
   );

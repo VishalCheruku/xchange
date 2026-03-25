@@ -1,86 +1,639 @@
-import { useEffect, useRef, useState } from 'react'
-import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp, where } from 'firebase/firestore'
-import { fireStore } from '../Firebase/Firebase'
+import { useEffect, useRef, useState } from "react"
+import { addDoc, collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore"
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage"
+import { fireStore, storage } from "../Firebase/Firebase"
 
-const ChatModal = ({ open, onClose, item, user }) => {
-  const [text, setText] = useState('')
+/* ─── tiny helpers ─────────────────────────────────────────────────── */
+const fmt = (ts) => {
+  if (!ts?.toDate) return ""
+  const d = ts.toDate()
+  const now = new Date()
+  const diffDays = Math.floor((now - d) / 86400000)
+  if (diffDays === 0) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  if (diffDays === 1) return "Yesterday"
+  if (diffDays < 7) return d.toLocaleDateString([], { weekday: "short" })
+  return d.toLocaleDateString([], { month: "short", day: "numeric" })
+}
+
+const groupByDate = (msgs) => {
+  const groups = []
+  let lastLabel = null
+  msgs.forEach((m) => {
+    const d = m.createdAt?.toDate?.()
+    const label = d
+      ? (() => {
+          const now = new Date()
+          const diff = Math.floor((now - d) / 86400000)
+          if (diff === 0) return "Today"
+          if (diff === 1) return "Yesterday"
+          return d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })
+        })()
+      : null
+    if (label && label !== lastLabel) {
+      groups.push({ type: "divider", label })
+      lastLabel = label
+    }
+    groups.push({ type: "msg", data: m })
+  })
+  return groups
+}
+
+/* ─── emojis ─────────────────────────────────────────────────────── */
+const EMOJIS = ["😀","😂","😍","🥰","😎","🤩","😅","😢","🙏","👍","🔥","🎉","💯","🚀","💡","✅","❤️","💰","📷","🤝","👋","😤","🤔","💪"]
+
+/* ─── quick chips ─────────────────────────────────────────────────── */
+const QUICK = [
+  { label: "Still available?", text: "Is it still available?" },
+  { label: "Pick up today", text: "I can pick up today!" },
+  { label: "Cash on delivery?", text: "Can we do cash on delivery?" },
+  { label: "Quick call?", text: "Can you do a quick call?" },
+]
+
+const ACTION_CHIPS = [
+  { label: "🔒 Hold 1h", text: "Please hold this item for 1 hour while I confirm.", color: "#d97706" },
+  { label: "🚗 ETA 20m", text: "Sharing ETA: I'll be there in ~20 minutes.", color: "#059669" },
+  { label: "📍 Safe spot", href: "https://www.google.com/maps/search/safe+public+meeting+spot+near+me" },
+]
+
+/* ══════════════════════════════════════════════════════════════════ */
+const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdProp }) => {
+  const [text, setText] = useState("")
   const [messages, setMessages] = useState([])
+  const [uploading, setUploading] = useState(false)
+  const [showEmojis, setShowEmojis] = useState(false)
+  const [showQuick, setShowQuick] = useState(false)
+  const [typingPeers, setTypingPeers] = useState([])
+  const [convMeta, setConvMeta] = useState(null)
+  const [imgPreview, setImgPreview] = useState(null)   // lightbox
+  const [pendingFile, setPendingFile] = useState(null)  // staged image
+  const [pendingPreview, setPendingPreview] = useState(null)
   const bottomRef = useRef(null)
+  const inputRef = useRef(null)
+  const emojiRef = useRef(null)
 
-  const conversationId = user && item ? `${item.id}_${item.userId}_${user.uid}` : null
+  const sellerId = item?.userId || convMeta?.sellerId || (convMeta?.participants || []).find((p) => p !== user?.uid) || null
+  const participantKey = sellerId && user ? [sellerId, user.uid].sort().join("_") : null
+  const conversationId = conversationIdProp || (item && user && participantKey ? `${item.id}_${participantKey}` : null)
 
+  /* close emoji on outside click */
+  useEffect(() => {
+    if (!showEmojis) return
+    const h = (e) => { if (emojiRef.current && !emojiRef.current.contains(e.target)) setShowEmojis(false) }
+    document.addEventListener("mousedown", h)
+    return () => document.removeEventListener("mousedown", h)
+  }, [showEmojis])
+
+  useEffect(() => { setMessages([]) }, [conversationId])
+
+  /* create conversation meta */
+  useEffect(() => {
+    if (!conversationId || !user || !item) return
+    const convRef = doc(fireStore, "conversations", conversationId)
+    const sellerName = item.userName || "Seller"
+    const buyerName = user.displayName || user.email || "Buyer"
+    setDoc(convRef, {
+      id: conversationId,
+      itemId: item.id,
+      itemTitle: item.title || "",
+      itemImage: item.imageUrl || (Array.isArray(item.images) ? item.images[0] : ""),
+      itemOwnerName: sellerName,
+      sellerId: sellerId || item.userId,
+      buyerId: user.uid,
+      participants: sellerId ? [sellerId, user.uid] : [item.userId, user.uid].filter(Boolean),
+      participantsNames: {
+        [sellerId || item.userId]: sellerName,
+        [user.uid]: buyerName,
+      },
+      createdAt: serverTimestamp(),
+      lastUpdated: serverTimestamp(),
+      lastSenderName: buyerName,
+      otherName: sellerName,
+    }, { merge: true }).catch(console.error)
+  }, [conversationId, user, item, sellerId])
+
+  /* messages listener (no composite index required) */
   useEffect(() => {
     if (!open || !conversationId) return
-    const messagesRef = collection(fireStore, 'messages')
-    const q = query(messagesRef, where('conversationId', '==', conversationId), orderBy('createdAt', 'asc'))
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-      setMessages(list)
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-    })
+    const q = query(collection(fireStore, "messages"), where("conversationId", "==", conversationId))
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const list = snapshot.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => {
+            const ta = a.createdAt?.toMillis?.() || 0
+            const tb = b.createdAt?.toMillis?.() || 0
+            return ta - tb
+          })
+        setMessages(list)
+        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 80)
+      },
+      console.error
+    )
     return () => unsub()
   }, [open, conversationId])
 
-  const sendMessage = async () => {
-    if (!user || !text.trim() || !conversationId) return
+
+  /* mark read */
+  useEffect(() => {
+    if (!open || !conversationId || !user || messages.length === 0) return
+    updateDoc(doc(fireStore, "conversations", conversationId), { [`lastRead.${user.uid}`]: serverTimestamp() }).catch(() => {})
+  }, [messages.length, open, conversationId, user])
+
+  /* typing + conv meta */
+  useEffect(() => {
+    if (!conversationId || !user) return
+    const unsub = onSnapshot(doc(fireStore, "conversations", conversationId), (snap) => {
+      const data = snap.data() || {}
+      const typing = data.typing || {}
+      setTypingPeers(Object.entries(typing).filter(([uid, val]) => uid !== user.uid && val).map(([uid]) => uid))
+      setConvMeta(data)
+    })
+    return () => unsub()
+  }, [conversationId, user])
+
+  /* ensure my name is stored for both sides */
+  useEffect(() => {
+    if (!conversationId || !user) return
+    const myName = user.displayName || user.email || "User"
+    updateDoc(doc(fireStore, "conversations", conversationId), {
+      [`participantsNames.${user.uid}`]: myName,
+      lastSenderName: convMeta?.lastSenderName || myName,
+    }).catch(() => {})
+  }, [conversationId, user, convMeta?.lastSenderName])
+
+  /* cleanup typing on unmount */
+  useEffect(() => {
+    return () => {
+      if (!conversationId || !user) return
+      updateDoc(doc(fireStore, "conversations", conversationId), { [`typing.${user.uid}`]: false }).catch(() => {})
+    }
+  }, [conversationId, user])
+
+  /* ── send ── */
+  const sendMessage = async ({ imageUrl, overrideText } = {}) => {
+    const bodyText = (overrideText ?? text).trim()
+    if (!user || (!bodyText && !imageUrl) || !conversationId) return
+    const otherParticipant = (convMeta?.participants || []).find((p) => p !== user.uid) || (sellerId !== user.uid ? sellerId : null)
+    const buyerIdResolved = sellerId && otherParticipant ? (user.uid === sellerId ? otherParticipant : user.uid) : (convMeta?.buyerId || user.uid)
+    const recipientId = otherParticipant && otherParticipant !== user.uid ? otherParticipant : null
     try {
-      await addDoc(collection(fireStore, 'messages'), {
-        conversationId,
-        itemId: item.id,
-        sellerId: item.userId,
-        buyerId: user.uid,
-        senderId: user.uid,
-        senderName: user.displayName || user.email || 'User',
-        text: text.trim(),
+      await addDoc(collection(fireStore, "messages"), {
+        conversationId, itemId: item.id,
+        sellerId: sellerId || item.userId, buyerId: buyerIdResolved,
+        participants: sellerId ? [sellerId, user.uid] : [item.userId, user.uid].filter(Boolean),
+        senderId: user.uid, senderName: user.displayName || user.email || "User",
+        text: bodyText || "", imageUrl: imageUrl || "",
         createdAt: serverTimestamp(),
       })
-      setText('')
-    } catch (err) {
-      console.error(err)
-    }
+      setText("")
+      const preview = bodyText || (imageUrl ? "📷 Photo" : "")
+      await setDoc(doc(fireStore, "conversations", conversationId), {
+        lastUpdated: serverTimestamp(), lastMessage: preview,
+        lastMessageType: imageUrl ? "image" : "text",
+        lastSenderId: user.uid,
+        lastSenderName: user.displayName || user.email || "User",
+        [`participantsNames.${user.uid}`]: user.displayName || user.email || "User",
+        [`lastRead.${user.uid}`]: serverTimestamp(),
+      }, { merge: true })
+      if (recipientId) {
+        await addDoc(collection(fireStore, "notifications"), {
+          userId: recipientId, title: "New message",
+          body: bodyText || "Photo", conversationId, read: false, createdAt: serverTimestamp(),
+        })
+      }
+    } catch (err) { console.error(err) }
   }
 
-  if (!open) return null
+  /* ── image handling ── */
+  const handleImageFile = (file) => {
+    if (!file) return
+    setPendingFile(file)
+    const reader = new FileReader()
+    reader.onload = (e) => setPendingPreview(e.target.result)
+    reader.readAsDataURL(file)
+  }
+
+  const sendStagedImage = async () => {
+    if (!pendingFile || !conversationId) return
+    try {
+      setUploading(true)
+      const imgRef = ref(storage, `chatMedia/${conversationId}/${Date.now()}_${pendingFile.name}`)
+      const snap = await uploadBytes(imgRef, pendingFile)
+      const url = await getDownloadURL(snap.ref)
+      await sendMessage({ imageUrl: url })
+    } catch (err) { console.error("upload failed", err) }
+    finally { setUploading(false); setPendingFile(null); setPendingPreview(null) }
+  }
+
+  const setTyping = (val) => {
+    if (!conversationId || !user) return
+    const myName = user.displayName || user.email || "User"
+    updateDoc(doc(fireStore, "conversations", conversationId), {
+      [`typing.${user.uid}`]: val,
+      [`participantsNames.${user.uid}`]: myName,
+      lastSenderName: convMeta?.lastSenderName || myName,
+    }).catch(() => {})
+  }
+
+  if (!open || !conversationId) return null
+
+  const grouped = groupByDate(messages)
+  const itemThumb = item?.imageUrl || (Array.isArray(item?.images) ? item?.images[0] : null)
 
   return (
-    <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl h-[72vh] bg-[#0f172a] text-white rounded-3xl shadow-2xl overflow-hidden grid grid-rows-[auto_1fr_auto] border border-slate-800">
-        <div className="px-5 py-4 flex items-center justify-between bg-[#111827] border-b border-slate-800">
-          <div>
-            <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Chat</p>
-            <p className="text-lg font-semibold text-white">{item?.title || 'Listing'}</p>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+        .cm-root { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .cm-scroll::-webkit-scrollbar { width: 4px }
+        .cm-scroll::-webkit-scrollbar-track { background: transparent }
+        .cm-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 8px }
+        .cm-bubble { animation: cm-pop .18s cubic-bezier(.34,1.56,.64,1) both }
+        @keyframes cm-pop { from { opacity:0; transform: scale(.92) translateY(6px) } to { opacity:1; transform: none } }
+        .cm-typing span { display:inline-block; width:6px; height:6px; border-radius:50%; background:#94a3b8; animation: cm-dot 1.2s infinite ease-in-out }
+        .cm-typing span:nth-child(2) { animation-delay:.2s }
+        .cm-typing span:nth-child(3) { animation-delay:.4s }
+        @keyframes cm-dot { 0%,60%,100% { transform:translateY(0) } 30% { transform:translateY(-5px) } }
+        .cm-chip { transition: all .15s; border: 1px solid rgba(255,255,255,.08) }
+        .cm-chip:hover { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.18); transform: translateY(-1px) }
+        .cm-send-btn { transition: all .15s }
+        .cm-send-btn:not(:disabled):hover { transform: scale(1.05) }
+        .cm-send-btn:not(:disabled):active { transform: scale(.97) }
+        .cm-modal-enter { animation: cm-modal-in .22s cubic-bezier(.34,1.3,.64,1) both }
+        @keyframes cm-modal-in { from { opacity:0; transform:scale(.96) translateY(12px) } to { opacity:1; transform:none } }
+        .cm-img-msg { cursor: zoom-in }
+        .cm-img-msg:hover { opacity: .92 }
+        .cm-close-btn { transition: all .15s }
+        .cm-close-btn:hover { background: rgba(255,255,255,.12); transform: scale(1.08) }
+      `}</style>
+
+      {/* ── Overlay ── */}
+      <div
+        className="cm-root"
+        style={{
+          position: "fixed", inset: 0, zIndex: 200,
+          background: "rgba(2,6,18,0.85)",
+          backdropFilter: "blur(12px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "16px",
+        }}
+        onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      >
+        {/* ── Modal Shell ── */}
+        <div
+          className="cm-modal-enter"
+          style={{
+            width: "100%", maxWidth: "780px", height: "82vh",
+            background: "linear-gradient(165deg, #0d1629 0%, #0a1020 60%, #0d1629 100%)",
+            borderRadius: "24px",
+            border: "1px solid rgba(255,255,255,0.07)",
+            boxShadow: "0 32px 80px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.04) inset",
+            display: "grid",
+            gridTemplateRows: "auto 1fr auto",
+            overflow: "hidden",
+          }}
+        >
+
+          {/* ══ HEADER ══ */}
+          <div style={{
+            padding: "14px 20px",
+            background: "rgba(255,255,255,0.03)",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
+            display: "flex", alignItems: "center", gap: "14px",
+          }}>
+            {/* Item thumb */}
+            <div style={{
+              width: 46, height: 46, borderRadius: 12, overflow: "hidden", flexShrink: 0,
+              border: "1.5px solid rgba(255,255,255,.1)",
+              background: "#1e293b",
+            }}>
+              {itemThumb
+                ? <img src={itemThumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🛒</div>}
+            </div>
+
+            {/* Title + status */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9", letterSpacing: "-.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {item?.title || "Listing"}
+              </div>
+              <div style={{ fontSize: 12, color: "#64748b", marginTop: 1, display: "flex", alignItems: "center", gap: 5 }}>
+                {typingPeers.length > 0
+                  ? <span style={{ color: "#38bdf8" }}>typing…</span>
+                  : <><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />online</>}
+              </div>
+            </div>
+
+            {/* Close */}
+            <button
+              onClick={onClose}
+              className="cm-close-btn"
+              style={{
+                width: 36, height: 36, borderRadius: "50%",
+                background: "rgba(255,255,255,.06)",
+                border: "1px solid rgba(255,255,255,.08)",
+                color: "#94a3b8", fontSize: 16, display: "flex",
+                alignItems: "center", justifyContent: "center", cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >✕</button>
           </div>
-          <button onClick={onClose} className="text-slate-300 hover:text-white text-lg">✕</button>
-        </div>
-        <div className="overflow-y-auto p-4 space-y-3 bg-gradient-to-b from-[#0f172a] via-[#0b1224] to-[#0f172a]">
-          {messages.length === 0 && (
-            <p className="text-sm text-slate-400 text-center">Start the conversation with an offer or a question.</p>
-          )}
-          {messages.map((msg) => {
-            const mine = msg.senderId === user?.uid
-            return (
-              <div key={msg.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[70%] px-3 py-2 rounded-2xl text-sm shadow ${mine ? 'bg-sky-600 text-white rounded-br-sm' : 'bg-slate-800 text-slate-100 rounded-bl-sm'}`}>
-                  <p className="font-semibold text-xs uppercase tracking-wide opacity-80">{mine ? 'You' : (msg.senderName || 'Seller')}</p>
-                  <p className="mt-1 leading-snug">{msg.text}</p>
+
+          {/* ══ MESSAGES ══ */}
+          <div
+            className="cm-scroll"
+            style={{
+              overflowY: "auto", padding: "16px 20px",
+              display: "flex", flexDirection: "column", gap: 2,
+              backgroundImage: `
+                radial-gradient(ellipse 60% 40% at 20% 80%, rgba(14,165,233,0.04) 0%, transparent 70%),
+                radial-gradient(ellipse 40% 30% at 80% 20%, rgba(99,102,241,0.04) 0%, transparent 70%)
+              `,
+            }}
+          >
+            {messages.length === 0 && (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 0", gap: 12 }}>
+                <div style={{ fontSize: 42 }}>👋</div>
+                <div style={{ color: "#475569", fontSize: 14, textAlign: "center", maxWidth: 240 }}>
+                  No messages yet. Send a message to start the conversation!
                 </div>
               </div>
-            )
-          })}
-          <div ref={bottomRef} />
-        </div>
-        <div className="p-4 bg-[#111827] border-t border-slate-800 flex gap-3">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-            placeholder="Write a message..."
-            className="flex-1 rounded-2xl bg-[#0b1224] border border-slate-700 text-white px-4 py-3 focus:outline-none focus:border-sky-500"
-          />
-          <button onClick={sendMessage} className="px-5 py-3 rounded-2xl bg-sky-600 text-white font-semibold hover:bg-sky-500">Send</button>
+            )}
+
+            {grouped.map((entry, i) => {
+              if (entry.type === "divider") {
+                return (
+                  <div key={`div-${i}`} style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0" }}>
+                    <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,.06)" }} />
+                    <span style={{ fontSize: 11, color: "#475569", whiteSpace: "nowrap", fontWeight: 500 }}>{entry.label}</span>
+                    <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,.06)" }} />
+                  </div>
+                )
+              }
+
+              const msg = entry.data
+              const mine = msg.senderId === user?.uid
+              const isLast = mine && messages[messages.length - 1]?.id === msg.id
+              const otherUid = sellerId === user?.uid ? msg.buyerId : sellerId
+              const seen = isLast && convMeta?.lastRead?.[otherUid || ""]
+
+              return (
+                <div key={msg.id} className="cm-bubble" style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start", marginBottom: 2 }}>
+                  <div style={{ maxWidth: "68%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
+                    <div style={{
+                      padding: msg.imageUrl && !msg.text ? "4px" : "10px 14px",
+                      borderRadius: mine ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                      background: mine
+                        ? "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)"
+                        : "rgba(255,255,255,0.07)",
+                      backdropFilter: mine ? "none" : "blur(8px)",
+                      border: mine ? "none" : "1px solid rgba(255,255,255,.08)",
+                      boxShadow: mine ? "0 4px 20px rgba(14,165,233,.25)" : "0 2px 8px rgba(0,0,0,.3)",
+                      color: "#f8fafc",
+                    }}>
+                      {!mine && (
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8", marginBottom: msg.text || msg.imageUrl ? 4 : 0, textTransform: "uppercase", letterSpacing: ".05em" }}>
+                          {msg.senderName || "Seller"}
+                        </div>
+                      )}
+                      {msg.imageUrl && (
+                        <img
+                          src={msg.imageUrl}
+                          alt="media"
+                          className="cm-img-msg"
+                          onClick={() => setImgPreview(msg.imageUrl)}
+                          style={{ display: "block", maxHeight: 220, borderRadius: 12, objectFit: "cover", maxWidth: "100%" }}
+                        />
+                      )}
+                      {msg.text && (
+                        <p style={{ margin: msg.imageUrl ? "8px 0 0" : 0, fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                          {msg.text}
+                        </p>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, paddingLeft: 2, paddingRight: 2 }}>
+                      <span style={{ fontSize: 10, color: "#475569" }}>{fmt(msg.createdAt)}</span>
+                      {mine && (
+                        <span style={{ fontSize: 12, color: seen ? "#38bdf8" : "#475569" }}>
+                          {seen ? "✓✓" : "✓"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+
+            {/* Typing indicator */}
+            {typingPeers.length > 0 && (
+              <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 4 }}>
+                <div style={{
+                  padding: "10px 16px", borderRadius: "18px 18px 18px 4px",
+                  background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,.08)",
+                }}>
+                  <div className="cm-typing" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span /><span /><span />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div ref={bottomRef} />
+          </div>
+
+          {/* ══ FOOTER ══ */}
+          <div style={{ borderTop: "1px solid rgba(255,255,255,.06)", background: "rgba(255,255,255,.02)" }}>
+
+            {/* Quick chips row */}
+            <div style={{ padding: "10px 16px 6px", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {QUICK.map((q) => (
+                <button
+                  key={q.label}
+                  className="cm-chip"
+                  onClick={() => sendMessage({ overrideText: q.text })}
+                  style={{
+                    fontSize: 12, fontWeight: 500, color: "#94a3b8",
+                    background: "rgba(255,255,255,.05)",
+                    borderRadius: 20, padding: "4px 12px", cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >{q.label}</button>
+              ))}
+              <div style={{ flex: 1 }} />
+              {ACTION_CHIPS.map((a) =>
+                a.href
+                  ? <a key={a.label} href={a.href} target="_blank" rel="noreferrer"
+                      className="cm-chip"
+                      style={{
+                        fontSize: 12, fontWeight: 600, color: "#94a3b8",
+                        background: "rgba(255,255,255,.05)",
+                        borderRadius: 20, padding: "4px 12px", cursor: "pointer",
+                        textDecoration: "none",
+                      }}>{a.label}</a>
+                  : <button key={a.label} onClick={() => sendMessage({ overrideText: a.text })}
+                      className="cm-chip"
+                      style={{
+                        fontSize: 12, fontWeight: 600, color: "#fff",
+                        background: `${a.color}22`,
+                        borderColor: `${a.color}44`,
+                        borderRadius: 20, padding: "4px 12px", cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}>{a.label}</button>
+              )}
+            </div>
+
+            {/* Staged image preview */}
+            {pendingPreview && (
+              <div style={{
+                margin: "0 16px 8px",
+                borderRadius: 14,
+                overflow: "hidden",
+                position: "relative",
+                background: "#0b1220",
+                border: "1px solid rgba(255,255,255,.1)",
+                display: "flex", alignItems: "center", padding: 8, gap: 10,
+              }}>
+                <img src={pendingPreview} alt="staged" style={{ height: 56, width: 56, objectFit: "cover", borderRadius: 10 }} />
+                <span style={{ fontSize: 13, color: "#94a3b8", flex: 1 }}>Ready to send</span>
+                <button onClick={() => { setPendingFile(null); setPendingPreview(null) }}
+                  style={{ color: "#ef4444", background: "none", border: "none", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>✕</button>
+                <button onClick={sendStagedImage} disabled={uploading}
+                  style={{
+                    background: "linear-gradient(135deg, #0ea5e9, #2563eb)",
+                    color: "#fff", border: "none", borderRadius: 10,
+                    padding: "6px 16px", fontWeight: 700, cursor: "pointer",
+                    fontSize: 13, fontFamily: "inherit",
+                  }}>
+                  {uploading ? "Uploading…" : "Send 📤"}
+                </button>
+              </div>
+            )}
+
+            {/* Input row */}
+            <div style={{ padding: "8px 16px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+
+              {/* Emoji */}
+              <div ref={emojiRef} style={{ position: "relative" }}>
+                <button
+                  onClick={() => setShowEmojis((v) => !v)}
+                  style={{
+                    width: 44, height: 44, borderRadius: 14, fontSize: 20,
+                    background: showEmojis ? "rgba(14,165,233,.15)" : "rgba(255,255,255,.06)",
+                    border: `1px solid ${showEmojis ? "rgba(14,165,233,.4)" : "rgba(255,255,255,.08)"}`,
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                    transition: "all .15s",
+                  }}
+                >😊</button>
+
+                {showEmojis && (
+                  <div style={{
+                    position: "absolute", bottom: 52, left: 0, zIndex: 10,
+                    background: "#0d1629",
+                    border: "1px solid rgba(255,255,255,.1)",
+                    borderRadius: 18, padding: 10,
+                    display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 4,
+                    boxShadow: "0 16px 48px rgba(0,0,0,.6)",
+                    animation: "cm-pop .15s ease both",
+                  }}>
+                    {EMOJIS.map((e) => (
+                      <button key={e} onClick={() => { setText((t) => t + e); setShowEmojis(false); inputRef.current?.focus() }}
+                        style={{
+                          width: 36, height: 36, borderRadius: 10, fontSize: 18, cursor: "pointer",
+                          background: "transparent", border: "none",
+                          transition: "background .1s",
+                        }}
+                        onMouseEnter={(ev) => ev.currentTarget.style.background = "rgba(255,255,255,.08)"}
+                        onMouseLeave={(ev) => ev.currentTarget.style.background = "transparent"}
+                      >{e}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Image attach */}
+              <label style={{
+                width: 44, height: 44, borderRadius: 14, fontSize: 20,
+                background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.08)",
+                cursor: uploading ? "not-allowed" : "pointer", display: "flex",
+                alignItems: "center", justifyContent: "center", flexShrink: 0,
+                opacity: uploading ? .5 : 1,
+              }}>
+                📎
+                <input type="file" accept="image/*" style={{ display: "none" }} disabled={uploading}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageFile(f); e.target.value = "" }} />
+              </label>
+
+              {/* Text input */}
+              <input
+                ref={inputRef}
+                value={text}
+                onChange={(e) => { setText(e.target.value); setTyping(true) }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                onBlur={() => setTyping(false)}
+                placeholder={uploading ? "Uploading…" : "Type a message…"}
+                disabled={uploading}
+                style={{
+                  flex: 1, height: 44, borderRadius: 14,
+                  background: "rgba(255,255,255,.06)",
+                  border: "1px solid rgba(255,255,255,.08)",
+                  color: "#f1f5f9", padding: "0 16px",
+                  fontSize: 14, fontFamily: "inherit", outline: "none",
+                  transition: "border-color .15s",
+                }}
+                onFocus={(e) => e.target.style.borderColor = "rgba(14,165,233,.5)"}
+              />
+
+              {/* Send */}
+              <button
+                onClick={() => sendMessage()}
+                disabled={uploading || (!text.trim() && !pendingFile)}
+                className="cm-send-btn"
+                style={{
+                  width: 44, height: 44, borderRadius: 14, flexShrink: 0,
+                  background: text.trim() || pendingFile
+                    ? "linear-gradient(135deg, #0ea5e9, #2563eb)"
+                    : "rgba(255,255,255,.06)",
+                  border: "none", cursor: text.trim() || pendingFile ? "pointer" : "default",
+                  color: "#fff", fontSize: 20, display: "flex",
+                  alignItems: "center", justifyContent: "center",
+                  boxShadow: text.trim() ? "0 4px 16px rgba(14,165,233,.35)" : "none",
+                  transition: "all .15s",
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <path d="M22 2L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* ── Image Lightbox ── */}
+      {imgPreview && (
+        <div
+          onClick={() => setImgPreview(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 300,
+            background: "rgba(0,0,0,.92)", backdropFilter: "blur(16px)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "zoom-out",
+          }}
+        >
+          <img src={imgPreview} alt="preview"
+            style={{ maxWidth: "90vw", maxHeight: "90vh", borderRadius: 16, boxShadow: "0 0 80px rgba(0,0,0,.8)", objectFit: "contain" }} />
+          <button onClick={() => setImgPreview(null)}
+            style={{
+              position: "absolute", top: 20, right: 20,
+              background: "rgba(255,255,255,.1)", border: "1px solid rgba(255,255,255,.15)",
+              borderRadius: "50%", width: 40, height: 40, color: "#fff",
+              fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            }}>✕</button>
+        </div>
+      )}
+    </>
   )
 }
 

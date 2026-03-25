@@ -3,10 +3,11 @@ import Navbar from '../Navbar/Navbar'
 import Login from '../Modal/Login'
 import Sell from '../Modal/Sell'
 import { useAuthState } from 'react-firebase-hooks/auth'
-import { auth } from '../Firebase/Firebase'
+import { auth, fireStore } from '../Firebase/Firebase'
 import { updateProfile } from 'firebase/auth'
 import { useNavigate } from 'react-router-dom'
 import { ItemsContext } from '../Context/Item'
+import { collection, onSnapshot, query, where } from 'firebase/firestore'
 
 const STORAGE_KEY = 'xchange_profile_extra'
 
@@ -17,6 +18,7 @@ const Profile = () => {
   const [openModalSell, setModalSell] = useState(false)
   const [status, setStatus] = useState('')
   const itemsCtx = ItemsContext()
+  const [offersMade, setOffersMade] = useState([])
 
   const toggleModal = () => setModal((prev) => !prev)
   const toggleModalSell = () => setModalSell((prev) => !prev)
@@ -41,6 +43,17 @@ const Profile = () => {
     setBio(extras.bio || '')
     setPhone(extras.phone || '')
   }, [user?.displayName, user?.uid])
+
+  useEffect(() => {
+    if (!user?.uid) { setOffersMade([]); return }
+    const q = query(collection(fireStore, 'offers'), where('buyerId', '==', user.uid))
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))
+      setOffersMade(list)
+    })
+    return () => unsub()
+  }, [user?.uid])
 
   const persistExtras = (payload) => {
     const latestRaw = localStorage.getItem(STORAGE_KEY) || '{}'
@@ -92,6 +105,13 @@ const Profile = () => {
       </div>
     )
   }
+
+  const myListings = useMemo(() => {
+    const items = itemsCtx.items || []
+    const uid = user?.uid
+    if (!uid) return []
+    return items.filter((it) => it.userId === uid)
+  }, [itemsCtx.items, user?.uid])
 
   return (
     <div>
@@ -170,6 +190,48 @@ const Profile = () => {
                 <li>Share pickup location only after initial agreement.</li>
                 <li>Mark favorites to revisit listings faster.</li>
               </ul>
+            </div>
+            <div className="hero-card">
+              <h3 className="text-xl font-semibold text-slate-900">Offers you made</h3>
+              {offersMade.length === 0 ? (
+                <p className="text-sm text-slate-600 mt-2">No offers yet.</p>
+              ) : (
+                <div className="mt-3 space-y-3 max-h-64 overflow-y-auto pr-1">
+                  {offersMade.map((offer) => (
+                    <div key={offer.id} className="flex items-center justify-between gap-3 border border-slate-200 rounded-lg px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-slate-900 text-sm truncate">{offer.itemTitle || 'Listing'}</p>
+                        <p className="text-xs text-slate-500 truncate">Rs {offer.amount} • {offer.status}</p>
+                      </div>
+                      {offer.itemImage ? (
+                        <img src={offer.itemImage} alt="" className="w-12 h-12 rounded-lg object-cover border border-slate-200" />
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="hero-card">
+              <h3 className="text-xl font-semibold text-slate-900">My listings</h3>
+              {myListings.length === 0 ? (
+                <p className="text-sm text-slate-600 mt-2">You have not listed anything yet.</p>
+              ) : (
+                <div className="mt-3 space-y-3 max-h-64 overflow-y-auto pr-1">
+                  {myListings.map((it) => (
+                    <button
+                      key={it.id}
+                      onClick={() => navigate(`/details/${it.id}`, { state: { item: it } })}
+                      className="w-full text-left flex items-center gap-3 border border-slate-200 rounded-lg px-3 py-2 hover:border-sky-300 hover:shadow-sm transition"
+                    >
+                      {it.imageUrl ? <img src={it.imageUrl} alt="" className="w-12 h-12 rounded-lg object-cover border border-slate-200" /> : null}
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 text-sm truncate">{it.title || 'Listing'}</p>
+                        <p className="text-xs text-slate-500 truncate">{it.category || 'Uncategorized'} • Rs {it.price}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

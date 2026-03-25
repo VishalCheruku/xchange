@@ -3,7 +3,8 @@ import { useState } from "react"
 import Input from "../Input/Input"
 import { UserAuth } from "../Context/Auth"
 import { addDoc, collection } from "firebase/firestore"
-import { fetchFromFirestore, fireStore } from "../Firebase/Firebase"
+import { fetchFromFirestore, fireStore, storage } from "../Firebase/Firebase"
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage"
 import fileUpload from '../../assets/fileUpload.svg'
 import loading from '../../assets/loading.gif'
 import close from '../../assets/close.svg'
@@ -18,6 +19,7 @@ const Sell = (props) => {
     const [price,setPrice] = useState('')
     const [description,setDescription] = useState('')
     const [image,setImage] = useState(null)
+    const [video,setVideo] = useState(null)
 
     const [submitting,setSubmitting] = useState(false)
 
@@ -40,6 +42,21 @@ const Sell = (props) => {
             return
         }
         setImage(file)
+    }
+
+    const handleVideoUpload = (event)=>{
+        const file = event.target.files?.[0]
+        if(!file) return
+        if(!file.type.startsWith('video/')){
+            alert('Please upload a valid video file')
+            return
+        }
+        const sizeMb = file.size / (1024 * 1024)
+        if(sizeMb > 120){
+            alert('Video too large. Keep it under 120MB for smooth upload.')
+            return
+        }
+        setVideo(file)
     }
     
     const handleSubmit = async (event)=>{
@@ -108,6 +125,7 @@ const Sell = (props) => {
         }
 
         let imageUrl = '';
+        let videoUrl = '';
         if(image){
             try {
                 if (image.type === 'image/svg+xml') {
@@ -140,12 +158,20 @@ const Sell = (props) => {
 
         try {
             const createdAt = new Date().toDateString()
+
+            if(video){
+                const vidRef = ref(storage, `videos/${auth.user.uid}/${Date.now()}_${video.name}`)
+                const snap = await uploadBytes(vidRef, video)
+                videoUrl = await getDownloadURL(snap.ref)
+            }
+
             const docRef = await addDoc(collection(fireStore, 'products'), {
                 title,
                 category,
                 price,
                 description,
                 imageUrl,
+                videoUrl,
                 userId: auth.user.uid,
                 userName: auth.user.displayName || 'Anonymous',
                 createAt: createdAt,
@@ -158,6 +184,7 @@ const Sell = (props) => {
                 price,
                 description,
                 imageUrl,
+                videoUrl,
                 userId: auth.user.uid,
                 userName: auth.user.displayName || 'Anonymous',
                 createAt: createdAt,
@@ -166,6 +193,7 @@ const Sell = (props) => {
             setItems((prev) => [optimisticItem, ...(prev || [])])
 
             setImage(null);
+            setVideo(null);
             const datas = await fetchFromFirestore();
             setItems(datas)
             toggleModalSell();
@@ -235,24 +263,51 @@ const Sell = (props) => {
                             </button>
                         </div>
                        ) : (
-                        <label  className="relative h-64 sm:h-72 w-full border-2 border-dashed border-sky-200 rounded-2xl flex flex-col items-center justify-center bg-white hover:border-sky-400 hover:bg-sky-50 transition cursor-pointer shadow-sm">
-                            <input
-                            onChange={handleImageUpload}
-                            type="file"
-                            accept="image/*"
-                            className="absolute inset-0 h-full w-full opacity-0 cursor-pointer z-30"
-                            required
-                            />
+                       <label  className="relative h-64 sm:h-72 w-full border-2 border-dashed border-sky-200 rounded-2xl flex flex-col items-center justify-center bg-white hover:border-sky-400 hover:bg-sky-50 transition cursor-pointer shadow-sm">
+                           <input
+                           onChange={handleImageUpload}
+                           type="file"
+                           accept="image/*"
+                           className="absolute inset-0 h-full w-full opacity-0 cursor-pointer z-30"
+                           required
+                           />
 
                             <div  className="flex flex-col items-center gap-2 pointer-events-none">
                                 <img  className="w-12" src={fileUpload} alt="" />
                                 <p  className="text-center text-sm font-semibold text-slate-800">Drop or click to upload</p>
                                 <p  className="text-center text-xs text-slate-500">SVG, PNG, JPG — under 8MB</p>
                             </div>
-                        </label>
+                       </label>
                        )} 
 
-                       </div>
+                      </div>
+
+                      <div className="pt-4 w-full">
+                        <p className="text-sm font-semibold text-slate-800 mb-2">Optional video walk-through (60-120s, &lt;120MB)</p>
+                        {video ? (
+                          <div className="relative h-48 w-full border border-amber-200 rounded-2xl overflow-hidden bg-white shadow-sm flex items-center justify-center">
+                            <video className="h-full" src={URL.createObjectURL(video)} controls />
+                            <button
+                              type="button"
+                              onClick={() => setVideo(null)}
+                              className="absolute top-3 right-3 text-xs px-2 py-1 rounded-full bg-white/80 border border-slate-200 shadow-sm hover:bg-white"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="relative h-20 w-full border-2 border-dashed border-amber-200 rounded-xl flex flex-col sm:flex-row items-center justify-between px-4 bg-amber-50/60 hover:border-amber-400 transition cursor-pointer text-sm text-amber-800 gap-2">
+                            <input
+                              onChange={handleVideoUpload}
+                              type="file"
+                              accept="video/*"
+                              className="absolute inset-0 h-full w-full opacity-0 cursor-pointer z-30"
+                            />
+                            <span className="font-semibold">Add quick walkthrough video</span>
+                            <span className="text-xs">MP4 / MOV recommended</span>
+                          </label>
+                        )}
+                      </div>
                        
 
                        {

@@ -212,6 +212,50 @@
     color: #64748b;
   }
 
+  .review-collapse {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 400ms ease, opacity 300ms ease;
+  }
+
+  .review-collapse.open {
+    max-height: 640px;
+    opacity: 1;
+  }
+
+  .review-card-animated {
+    animation: reviewPop 260ms ease;
+  }
+
+  @keyframes reviewPop {
+    0% { transform: translateY(8px) scale(0.98); opacity: 0; }
+    100% { transform: translateY(0) scale(1); opacity: 1; }
+  }
+
+  .star-btn {
+    transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
+    box-shadow: 0 8px 18px rgba(251, 191, 36, 0.28);
+  }
+
+  .star-btn:hover {
+    transform: translateY(-2px) scale(1.04);
+  }
+
+  .star-btn.active {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #fff;
+    border-color: #f59e0b;
+    box-shadow: 0 10px 24px rgba(245, 158, 11, 0.32);
+    animation: starPulse 380ms ease;
+  }
+
+  @keyframes starPulse {
+    0% { transform: scale(0.9); }
+    60% { transform: scale(1.08); }
+    100% { transform: scale(1); }
+  }
+
   .hover-card {
     transition: transform 200ms ease, box-shadow 200ms ease;
   }

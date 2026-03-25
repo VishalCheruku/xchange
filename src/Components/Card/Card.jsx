@@ -36,7 +36,7 @@ const Card = ({
       <div className={`grid gap-4 pt-5 ${viewMode === 'list' ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4'}`}>
         {items.map((item) => (
           <Link
-            to={'/details'}
+            to={`/details/${item.id || ''}`}
             state={{ item }}
             key={item.id}
             onClick={() => onViewItem?.(item)}

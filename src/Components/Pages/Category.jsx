@@ -5,9 +5,8 @@ import Card from '../Card/Card'
 import { ItemsContext } from '../Context/Item'
 import Login from '../Modal/Login'
 import Sell from '../Modal/Sell'
-import { auth, fireStore } from '../Firebase/Firebase'
+import { auth } from '../Firebase/Firebase'
 import { useAuthState } from 'react-firebase-hooks/auth'
-import { deleteDoc, doc } from 'firebase/firestore'
 
 const Category = () => {
   const { name } = useParams()
@@ -132,10 +131,10 @@ const Category = () => {
           canDelete={(item) => user && item.userId === user.uid}
           onDelete={async (item) => {
             try {
-              await deleteDoc(doc(fireStore, 'products', item.id))
-              itemsCtx.setItems((prev) => (prev || []).filter((it) => it.id !== item.id))
+              await itemsCtx.deleteItem(item.id)
             } catch (err) {
               console.error(err)
+              alert('Failed to delete. Please try again.')
             }
           }}
         />

@@ -26,12 +26,12 @@ Features
 - Vercel CI/CD: pushes to main deploy to production; other branches get Preview URLs
 
 Modules (key paths)
-- src/App.jsx – route map with Suspense fallback (LoaderX)
-- src/Components/Modal/Login.jsx – login modal, Google popup, CTA carousel
-- src/Components/Firebase/Firebase.js – Firebase config/init, auth provider, storage, Firestore helper
-- src/Components/Input/Input.jsx – styled text input with floating label
-- src/index.css – Tailwind + Google font imports
-- src/Components/Loader/LoaderX.jsx – global loading indicator
+- src/App.jsx �  -replace  \u201d, route map with Suspense fallback (LoaderX)
+- src/Components/Modal/Login.jsx �  -replace  \u201d, login modal, Google popup, CTA carousel
+- src/Components/Firebase/Firebase.js �  -replace  \u201d, Firebase config/init, auth provider, storage, Firestore helper
+- src/Components/Input/Input.jsx �  -replace  \u201d, styled text input with floating label
+- src/index.css �  -replace  \u201d, Tailwind + Google font imports
+- src/Components/Loader/LoaderX.jsx �  -replace  \u201d, global loading indicator
 
 Project Structure
 src/
@@ -57,17 +57,27 @@ VITE_FIREBASE_MEASUREMENT_ID=...
 Update src/Components/Firebase/Firebase.js to read from import.meta.env.
 
 Scripts
-- npm install – install deps
-- npm run dev – dev server
-- npm run build – production build
-- npm run preview – preview prod build
-- npm run lint – lint with ESLint
+- npm install �  -replace  \u201d, install deps
+- npm run dev �  -replace  \u201d, dev server
+- npm run build �  -replace  \u201d, production build
+- npm run preview �  -replace  \u201d, preview prod build
+- npm run lint �  -replace  \u201d, lint with ESLint
 
 Deployment (Vercel)
 - Repo is connected to Vercel; pushes to main trigger prod deploy.
 - Preview deploys for other branches/PRs.
 - Build command: npm run build; output: dist/.
 - Ensure Vercel project has Firebase env vars and your Vercel domains are added to Firebase Auth authorized domains.
+
+Recent Updates (Mar 2026)
+- Dynamic categories: navbar reads live categories from items; new user-added categories appear automatically.
+- Chat system: product-name chat titles, typing indicator, read receipts, image sharing, quick chips, staged image preview, lightbox; delete chat removes conversation + messages + notifications; self-chat is blocked gracefully.
+- Reliable listeners: chat/offers lists avoid composite indexes; client-side sorting keeps threads visible after reload; conversation names derive from product titles to avoid duplicates.
+- Offers: buyers can make offers; sellers get notifications; offer status updates notify buyers; offers surface under Profile → “Offers you made.”
+- Profile: added “My Listings” (clickable to details) and “Offers you made.”
+- Listing management: unified delete helper; instant UI update across Home/Category/Details; only user-generated products remain (seed catalog removed).
+- UX fixes: detail pages auto-scroll to top; sticky navbar; single in-place search; smooth search via deferred input; cleaned spacing/pointer issues on navbar search.
+- Data hygiene: prevents self-chat creation; cleans up notification/read metadata on send.
 
 Authentication Notes
 - Uses signInWithPopup(auth, provider) for Google.

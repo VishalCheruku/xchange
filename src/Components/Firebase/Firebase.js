@@ -7,13 +7,13 @@ import { getAnalytics } from "firebase/analytics";
 
 
 const firebaseConfig = {
-  apiKey: "AIzaSyASszaJ_gvVdbOT3iP3env85Gjp42fEYog",
-  authDomain: "xchange-55555.firebaseapp.com",
-  projectId: "xchange-55555",
-  storageBucket: "xchange-55555.firebasestorage.app",
-  messagingSenderId: "353288352995",
-  appId: "1:353288352995:web:bfdd17167fdbee0ae3c1d6",
-  measurementId: "G-T0S0JFWH9F"
+  apiKey: "AIzaSyD6rvF4zBabKRvOaf0mqGm7yF7jWRo9t6Q",
+  authDomain: "xchange-cafe4.firebaseapp.com",
+  projectId: "xchange-cafe4",
+  storageBucket: "xchange-cafe4.firebasestorage.app",
+  messagingSenderId: "513797235238",
+  appId: "1:513797235238:web:1cf7a26e08b0836c843ce7",
+  measurementId: "G-655RBNCLW7"
 };
 
 
@@ -49,4 +49,3 @@ const fetchFromFirestore = async () => {
     fireStore,
     fetchFromFirestore
   }
-

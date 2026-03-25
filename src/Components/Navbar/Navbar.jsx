@@ -8,9 +8,10 @@ import { Link, useNavigate } from 'react-router-dom'
 import { auth, fireStore } from '../Firebase/Firebase'
 import addBtn from '../../assets/xchange-sell.svg'
 import profileIcon from '../../assets/profile.svg'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { signOut } from 'firebase/auth'
-import { collection, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore'
+import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore'
+import { ItemsContext } from '../Context/Item'
 
 const Navbar = (props) => {
     const [user] = useAuthState(auth)
@@ -18,6 +19,9 @@ const Navbar = (props) => {
     const [menuOpen, setMenuOpen] = useState(false)
     const [notifOpen, setNotifOpen] = useState(false)
     const [notifications, setNotifications] = useState([])
+    const [toast, setToast] = useState(null)
+    const [lastNotifId, setLastNotifId] = useState(null)
+    const [unreadChats, setUnreadChats] = useState(0)
     const menuRef = useRef(null)
     const notifRef = useRef(null)
     const {
@@ -25,10 +29,14 @@ const Navbar = (props) => {
         toggleModalSell = () => {},
         searchQuery = '',
         onSearchChange = () => {},
-        locationQuery = '',
-        onLocationChange = () => {},
     } = props
-    const categories = ['Cars','Books','Houses','Bikes','Sports','Furniture','Electronics','Trending']
+    const itemsCtx = ItemsContext() || { items: [] }
+    const categories = useMemo(() => {
+      const set = new Set((itemsCtx.items || []).map((it) => it.category).filter(Boolean))
+      const list = Array.from(set)
+      if (list.length === 0) return ['Cars','Books','Houses','Bikes','Sports','Furniture','Electronics','Trending']
+      return list.sort((a, b) => a.localeCompare(b))
+    }, [itemsCtx.items])
 
     useEffect(() => {
       if (!menuOpen) return
@@ -55,13 +63,43 @@ const Navbar = (props) => {
     useEffect(() => {
       if (!user?.uid) {
         setNotifications([])
+        setToast(null)
         return
       }
       const notifRefCol = collection(fireStore, 'notifications')
-      const q = query(notifRefCol, where('userId', '==', user.uid), orderBy('createdAt', 'desc'))
+      const q = query(notifRefCol, where('userId', '==', user.uid))
       const unsub = onSnapshot(q, (snapshot) => {
         const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0))
         setNotifications(list)
+        const newest = list[0]
+        if (newest && newest.read === false && newest.id !== lastNotifId) {
+          setToast({ title: newest.title || 'Update', body: newest.body || '' })
+          setLastNotifId(newest.id)
+          setTimeout(() => setToast(null), 3500)
+        }
+      })
+      return () => unsub()
+    }, [user?.uid, lastNotifId])
+
+    useEffect(() => {
+      if (!user?.uid) {
+        setUnreadChats(0)
+        return
+      }
+      const convRef = collection(fireStore, 'conversations')
+      const q = query(convRef, where('participants', 'array-contains', user.uid))
+      const unsub = onSnapshot(q, (snapshot) => {
+        let count = 0
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() || {}
+          const hasContent = data.lastMessage || data.lastMessageType
+          if (!hasContent) return
+          const lastUpdated = data.lastUpdated?.toMillis?.() || 0
+          const lastRead = data.lastRead?.[user.uid]?.toMillis?.() || 0
+          if (lastUpdated > lastRead) count += 1
+        })
+        setUnreadChats(count)
       })
       return () => unsub()
     }, [user?.uid])
@@ -90,6 +128,11 @@ const Navbar = (props) => {
       navigate('/profile')
     }
 
+    const goToMyListings = () => {
+      setMenuOpen(false)
+      navigate('/profile#my-listings')
+    }
+
     const handleLogout = async () => {
       try {
         await signOut(auth)
@@ -113,17 +156,6 @@ const Navbar = (props) => {
                 </Link>
 
                 <div className="nav-search">
-                    <div className='relative location-search'>
-                        <img src={search} alt="" className='absolute top-4 left-2 w-5' />
-                        <input
-                            value={locationQuery}
-                            onChange={(event) => onLocationChange(event.target.value)}
-                            placeholder='Search city, area, or locality...'
-                            className='w-[70px] sm:w-[170px] md:w-[240px] lg:w-[260px] p-3 pl-8 pr-8 border-sky-300 border-solid border-2 rounded-md placeholder:text-ellipsis focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200'
-                            type="text"
-                        />
-                    </div>
-
                     <div className="relative w-full main-search">
                         <input
                             value={searchQuery}
@@ -146,17 +178,19 @@ const Navbar = (props) => {
                       </svg>
                       <span className="hidden sm:inline">Home</span>
                     </Link>
-                    <Link to="/search" className="nav-home ghost" aria-label="Search">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="11" cy="11" r="7" />
-                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                      </svg>
-                      <span className="hidden sm:inline">Search</span>
-                    </Link>
+                    {user ? (
+                      <Link to="/chat" className="nav-home ghost relative" aria-label="Chats">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                        <span className="hidden sm:inline">Chat</span>
+                        {unreadChats > 0 && <span className="notif-badge">{unreadChats}</span>}
+                      </Link>
+                    ) : null}
                     {user ? (
                       <>
                         <div className="relative" ref={notifRef}>
-                          <button className="nav-icon nav-icon-blue" onClick={() => setNotifOpen((p)=>!p)} aria-label="Notifications">
+                        <button className="nav-icon nav-icon-blue" onClick={() => setNotifOpen((p)=>!p)} aria-label="Notifications">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                               <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
                               <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
@@ -195,6 +229,7 @@ const Navbar = (props) => {
                                 </div>
                               </div>
                               <button className="profile-menu-item" onClick={goToProfile}>Profile</button>
+                              <button className="profile-menu-item" onClick={goToMyListings}>My Listings</button>
                               <button className="profile-menu-item danger" onClick={handleLogout}>Logout</button>
                             </div>
                           )}
@@ -217,6 +252,12 @@ const Navbar = (props) => {
                     )}
                 </div>
             </nav>
+            {toast ? (
+              <div className="fixed top-20 right-4 z-[200] bg-white shadow-2xl border border-slate-200 rounded-xl px-4 py-3 w-72">
+                <p className="font-semibold text-slate-900 text-sm">{toast.title}</p>
+                <p className="text-xs text-slate-600 mt-1">{toast.body}</p>
+              </div>
+            ) : null}
             <div className='w-full relative z-0 flex shadow-md p-2 pt-24 pl-6 pr-6 sm:pl-16 md:pr-16 sub-lists bg-white/70 backdrop-blur nav-cats'>
                 <ul className='list-none flex items-center gap-3 w-full'>
                     <div  className='flex flex-shrink-0'>

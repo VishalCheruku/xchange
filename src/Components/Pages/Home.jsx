@@ -1,19 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useDeferredValue } from 'react'
 import Navbar from '../Navbar/Navbar'
 import Login from '../Modal/Login'
 import Sell from '../Modal/Sell'
 import Card from '../Card/Card'
 import { ItemsContext } from '../Context/Item'
-import { auth, fireStore } from '../Firebase/Firebase'
+import { auth } from '../Firebase/Firebase'
 import { useAuthState } from 'react-firebase-hooks/auth'
-import { deleteDoc, doc } from 'firebase/firestore'
 
 
 const Home = () => {
   const[openModal,setModal] = useState(false)
   const [openModalSell ,setModalSell] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [locationQuery, setLocationQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [sortKey, setSortKey] = useState('latest')
   const [minPrice, setMinPrice] = useState('')
@@ -37,11 +35,6 @@ const Home = () => {
     const stored = JSON.parse(localStorage.getItem('xchange_recent') || '[]')
     return Array.isArray(stored) ? stored : []
   })
-
-  useEffect(()=>{
-    console.log('Updated Items:' ,itemsCtx.items);
-
-  },[itemsCtx.items])
 
   useEffect(() => {
     localStorage.setItem('xchange_favorites', JSON.stringify(favoriteIds))
@@ -91,23 +84,18 @@ const Home = () => {
     })
   }
 
+  const deferredSearch = useDeferredValue(searchQuery)
+
   const filteredItems = useMemo(() => {
     const items = itemsCtx.items || []
-    const query = searchQuery.trim().toLowerCase()
-    const locality = locationQuery.trim().toLowerCase()
+    const query = deferredSearch.trim().toLowerCase()
+    const locality = ''
     let list = items
 
     if (query) {
       list = list.filter((item) => {
         const haystack = `${item.title || ''} ${item.category || ''} ${item.description || ''}`.toLowerCase()
         return haystack.includes(query)
-      })
-    }
-
-    if (locality) {
-      list = list.filter((item) => {
-        const haystack = `${item.title || ''} ${item.description || ''}`.toLowerCase()
-        return haystack.includes(locality)
       })
     }
 
@@ -138,7 +126,6 @@ const Home = () => {
   }, [
     itemsCtx.items,
     searchQuery,
-    locationQuery,
     selectedCategory,
     minPrice,
     maxPrice,
@@ -167,14 +154,12 @@ const Home = () => {
 
   return (
     <div>
-     <Navbar
-      toggleModal={toggleModal}
-      toggleModalSell={toggleModalSell}
-      searchQuery={searchQuery}
-      onSearchChange={setSearchQuery}
-      locationQuery={locationQuery}
-      onLocationChange={setLocationQuery}
-     />
+      <Navbar
+        toggleModal={toggleModal}
+        toggleModalSell={toggleModalSell}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
      <Login  toggleModal={toggleModal}  status={openModal}/>
      <Sell setItems={(itemsCtx).setItems} toggleModalSell={toggleModalSell} status={openModalSell}  />
 
@@ -319,10 +304,10 @@ const Home = () => {
         canDelete={(item) => user && item.userId === user.uid}
         onDelete={async (item) => {
           try {
-            await deleteDoc(doc(fireStore, 'products', item.id))
-            itemsCtx.setItems((prev) => (prev || []).filter((it) => it.id !== item.id))
+            await itemsCtx.deleteItem(item.id)
           } catch (err) {
             console.error(err)
+            alert('Failed to delete. Check your connection and try again.')
           }
         }}
         emptyMessage="No listings match your filters yet. Try loosening the price range or search."
