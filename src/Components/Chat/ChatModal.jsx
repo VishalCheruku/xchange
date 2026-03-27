@@ -77,8 +77,8 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
   const [showQuick, setShowQuick] = useState(false)
   const [typingPeers, setTypingPeers] = useState([])
   const [convMeta, setConvMeta] = useState(null)
-  const [imgPreview, setImgPreview] = useState(null)   // lightbox
-  const [pendingFile, setPendingFile] = useState(null)  // staged image
+  const [imgPreview, setImgPreview] = useState(null)
+  const [pendingFile, setPendingFile] = useState(null)
   const [pendingPreview, setPendingPreview] = useState(null)
   const [aiChatInsight, setAIChatInsight] = useState(null)
   const [aiError, setAIError] = useState(null)
@@ -97,6 +97,16 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
   const sellerId = item?.userId || convMeta?.sellerId || (convMeta?.participants || []).find((p) => p !== user?.uid) || null
   const participantKey = sellerId && user ? [sellerId, user.uid].sort().join("_") : null
   const conversationId = conversationIdProp || (item && user && participantKey ? `${item.id}_${participantKey}` : null)
+
+  // ✅ Resolve the other person's display name for the header
+  const otherPersonId = sellerId !== user?.uid ? sellerId : (convMeta?.participants || []).find((p) => p !== user?.uid)
+  const otherPersonName = useMemo(() => {
+    if (convMeta?.participantsNames && otherPersonId) {
+      return convMeta.participantsNames[otherPersonId] || null
+    }
+    return null
+  }, [convMeta, otherPersonId])
+  const headerName = otherPersonName || item?.userName || convMeta?.otherName || convMeta?.itemOwnerName || "Seller"
 
   const aiQuickSuggestionsRaw = useMemo(() => aiChatInsight?.conversation?.suggestions?.nextReplies || [], [aiChatInsight])
   const aiQuickSuggestions = useAISuggestionGuard({
@@ -167,7 +177,7 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
     }, { merge: true }).catch(console.error)
   }, [conversationId, user, item, sellerId])
 
-  /* messages listener (no composite index required) */
+  /* messages listener */
   useEffect(() => {
     if (!open || !conversationId) return
     const q = query(collection(fireStore, "messages"), where("conversationId", "==", conversationId))
@@ -188,7 +198,6 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
     )
     return () => unsub()
   }, [open, conversationId])
-
 
   /* mark read */
   useEffect(() => {
@@ -236,19 +245,11 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
         comparablePrices: [],
         offers: chatOffers,
         incomingOffer: Number.isFinite(incomingOfferAmount) ? { amount: incomingOfferAmount } : null,
-        profile: {
-          completeness: item?.userName ? 0.8 : 0.6,
-        },
-        behavior: {
-          responseConsistency,
-          pastReports: 0,
-        },
+        profile: { completeness: item?.userName ? 0.8 : 0.6 },
+        behavior: { responseConsistency, pastReports: 0 },
       },
       (result, error) => {
-        if (error) {
-          setAIError(error)
-          return
-        }
+        if (error) { setAIError(error); return }
         setAIChatInsight(result || null)
       },
     )
@@ -266,7 +267,7 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
     return () => unsub()
   }, [conversationId, user])
 
-  /* ensure my name is stored for both sides */
+  /* ensure my name is stored */
   useEffect(() => {
     if (!conversationId || !user) return
     const myName = user.displayName || user.email || "User"
@@ -428,15 +429,32 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
                 : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🛒</div>}
             </div>
 
-            {/* Title + status */}
+            {/* ✅ FIX: Title = seller's username, subtitle = item name */}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#f1f5f9", letterSpacing: "-.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {item?.title || "Listing"}
+              <div style={{
+                fontSize: 15, fontWeight: 700, color: "#f1f5f9",
+                letterSpacing: "-.01em", whiteSpace: "nowrap",
+                overflow: "hidden", textOverflow: "ellipsis",
+              }}>
+                {headerName}
               </div>
-              <div style={{ fontSize: 12, color: "#64748b", marginTop: 1, display: "flex", alignItems: "center", gap: 5 }}>
-                {typingPeers.length > 0
-                  ? <span style={{ color: "#38bdf8" }}>typing…</span>
-                  : <><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />online</>}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                {typingPeers.length > 0 ? (
+                  <span style={{ fontSize: 12, color: "#38bdf8", fontWeight: 500 }}>typing…</span>
+                ) : (
+                  <>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#22c55e", display: "inline-block", flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, color: "#64748b" }}>online</span>
+                  </>
+                )}
+                <span style={{ fontSize: 12, color: "#334155" }}>·</span>
+                <span style={{
+                  fontSize: 11, color: "#475569", fontWeight: 500,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  maxWidth: 200,
+                }}>
+                  {item?.title || "Listing"}
+                </span>
               </div>
             </div>
 
@@ -476,141 +494,145 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
                 `,
               }}
             >
-            {messages.length === 0 && (
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 0", gap: 12 }}>
-                <div style={{ fontSize: 42 }}>👋</div>
-                <div style={{ color: "#475569", fontSize: 14, textAlign: "center", maxWidth: 240 }}>
-                  No messages yet. Send a message to start the conversation!
+              {messages.length === 0 && (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 0", gap: 12 }}>
+                  <div style={{ fontSize: 42 }}>👋</div>
+                  <div style={{ color: "#475569", fontSize: 14, textAlign: "center", maxWidth: 240 }}>
+                    Say hi to <strong style={{ color: "#94a3b8" }}>{headerName}</strong>!<br />
+                    Ask about the listing or make an offer.
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {grouped.map((entry, i) => {
-              if (entry.type === "divider") {
+              {grouped.map((entry, i) => {
+                if (entry.type === "divider") {
+                  return (
+                    <div key={`div-${i}`} style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0" }}>
+                      <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,.06)" }} />
+                      <span style={{ fontSize: 11, color: "#475569", whiteSpace: "nowrap", fontWeight: 500 }}>{entry.label}</span>
+                      <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,.06)" }} />
+                    </div>
+                  )
+                }
+
+                const msg = entry.data
+                const mine = msg.senderId === user?.uid
+                const isLast = mine && messages[messages.length - 1]?.id === msg.id
+                const otherUid = sellerId === user?.uid ? msg.buyerId : sellerId
+                const seen = isLast && convMeta?.lastRead?.[otherUid || ""]
+
                 return (
-                  <div key={`div-${i}`} style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0" }}>
-                    <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,.06)" }} />
-                    <span style={{ fontSize: 11, color: "#475569", whiteSpace: "nowrap", fontWeight: 500 }}>{entry.label}</span>
-                    <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,.06)" }} />
+                  <div key={msg.id} className="cm-bubble" style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start", marginBottom: 2 }}>
+                    <div style={{ maxWidth: "68%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
+                      <div style={{
+                        padding: msg.imageUrl && !msg.text ? "4px" : "10px 14px",
+                        borderRadius: mine ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                        background: mine
+                          ? "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)"
+                          : "rgba(255,255,255,0.07)",
+                        backdropFilter: mine ? "none" : "blur(8px)",
+                        border: mine ? "none" : "1px solid rgba(255,255,255,.08)",
+                        boxShadow: mine ? "0 4px 20px rgba(14,165,233,.25)" : "0 2px 8px rgba(0,0,0,.3)",
+                        color: "#f8fafc",
+                      }}>
+                        {/* ✅ Show sender's actual username, not generic "Seller" */}
+                        {!mine && (
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8", marginBottom: msg.text || msg.imageUrl ? 4 : 0, textTransform: "uppercase", letterSpacing: ".05em" }}>
+                            {msg.senderName || headerName}
+                          </div>
+                        )}
+                        {msg.imageUrl && (
+                          <img
+                            src={msg.imageUrl}
+                            alt="media"
+                            className="cm-img-msg"
+                            onClick={() => setImgPreview(msg.imageUrl)}
+                            style={{ display: "block", maxHeight: 220, borderRadius: 12, objectFit: "cover", maxWidth: "100%" }}
+                          />
+                        )}
+                        {msg.text && (
+                          <p style={{ margin: msg.imageUrl ? "8px 0 0" : 0, fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                            {msg.text}
+                          </p>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, paddingLeft: 2, paddingRight: 2 }}>
+                        <span style={{ fontSize: 10, color: "#475569" }}>{fmt(msg.createdAt)}</span>
+                        {mine && (
+                          <span style={{ fontSize: 12, color: seen ? "#38bdf8" : "#475569" }}>
+                            {seen ? "✓✓" : "✓"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )
-              }
+              })}
 
-              const msg = entry.data
-              const mine = msg.senderId === user?.uid
-              const isLast = mine && messages[messages.length - 1]?.id === msg.id
-              const otherUid = sellerId === user?.uid ? msg.buyerId : sellerId
-              const seen = isLast && convMeta?.lastRead?.[otherUid || ""]
-
-              return (
-                <div key={msg.id} className="cm-bubble" style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start", marginBottom: 2 }}>
-                  <div style={{ maxWidth: "68%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
-                    <div style={{
-                      padding: msg.imageUrl && !msg.text ? "4px" : "10px 14px",
-                      borderRadius: mine ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-                      background: mine
-                        ? "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)"
-                        : "rgba(255,255,255,0.07)",
-                      backdropFilter: mine ? "none" : "blur(8px)",
-                      border: mine ? "none" : "1px solid rgba(255,255,255,.08)",
-                      boxShadow: mine ? "0 4px 20px rgba(14,165,233,.25)" : "0 2px 8px rgba(0,0,0,.3)",
-                      color: "#f8fafc",
-                    }}>
-                      {!mine && (
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8", marginBottom: msg.text || msg.imageUrl ? 4 : 0, textTransform: "uppercase", letterSpacing: ".05em" }}>
-                          {msg.senderName || "Seller"}
-                        </div>
-                      )}
-                      {msg.imageUrl && (
-                        <img
-                          src={msg.imageUrl}
-                          alt="media"
-                          className="cm-img-msg"
-                          onClick={() => setImgPreview(msg.imageUrl)}
-                          style={{ display: "block", maxHeight: 220, borderRadius: 12, objectFit: "cover", maxWidth: "100%" }}
-                        />
-                      )}
-                      {msg.text && (
-                        <p style={{ margin: msg.imageUrl ? "8px 0 0" : 0, fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                          {msg.text}
-                        </p>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, paddingLeft: 2, paddingRight: 2 }}>
-                      <span style={{ fontSize: 10, color: "#475569" }}>{fmt(msg.createdAt)}</span>
-                      {mine && (
-                        <span style={{ fontSize: 12, color: seen ? "#38bdf8" : "#475569" }}>
-                          {seen ? "✓✓" : "✓"}
-                        </span>
-                      )}
+              {/* Typing indicator */}
+              {typingPeers.length > 0 && (
+                <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 4 }}>
+                  <div style={{
+                    padding: "10px 16px", borderRadius: "18px 18px 18px 4px",
+                    background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,.08)",
+                  }}>
+                    <div className="cm-typing" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span /><span /><span />
                     </div>
                   </div>
                 </div>
-              )
-            })}
+              )}
 
-            {/* Typing indicator */}
-            {typingPeers.length > 0 && (
-              <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 4 }}>
-                <div style={{
-                  padding: "10px 16px", borderRadius: "18px 18px 18px 4px",
-                  background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,.08)",
-                }}>
-                  <div className="cm-typing" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span /><span /><span />
+              <div ref={bottomRef} />
+            </div>
+
+            {/* AI Deal Sidebar */}
+            {aiModeEnabled && aiVisibility.showDealSidebar && aiChatInsight?.deal ? (
+              <aside
+                style={{
+                  borderLeft: "1px solid rgba(255,255,255,.08)",
+                  background: "rgba(255,255,255,0.03)",
+                  padding: "14px 12px",
+                  overflowY: "auto",
+                  display: "grid",
+                  alignContent: "start",
+                  gap: 10,
+                }}
+              >
+                <p className="ai-chat-label">Deal Sidebar</p>
+                <span className="ai-chat-pill">Price: {aiChatInsight.deal.priceEvaluation || "--"}</span>
+                <span className="ai-chat-pill">Close: {toPercent(aiChatInsight.deal?.dealSuccess?.closeProbability)}</span>
+                <span className="ai-chat-pill">
+                  Time: {aiChatInsight.deal?.dealSuccess?.timeToCloseHours ?? aiChatInsight.deal?.dealSuccess?.etaHours ?? "--"}h
+                </span>
+                <span className="ai-chat-pill">Momentum: {aiChatInsight.deal?.dealMomentum || "--"}</span>
+                <div className="ai-chat-side-card">
+                  <p className="ai-chat-side-title">Price insights</p>
+                  <p className="ai-chat-side-line">Fast sale: Rs {aiChatInsight.deal?.multiScenarioPricing?.fastSale ?? "--"}</p>
+                  <p className="ai-chat-side-line">Balanced: Rs {aiChatInsight.deal?.multiScenarioPricing?.balanced ?? "--"}</p>
+                  <p className="ai-chat-side-line">Max profit: Rs {aiChatInsight.deal?.multiScenarioPricing?.maxProfit ?? "--"}</p>
+                </div>
+                {aiChatInsight.deal?.offerQuality ? (
+                  <div className="ai-chat-side-card">
+                    <p className="ai-chat-side-title">Offer score</p>
+                    <p className="ai-chat-side-line">Fairness: {Math.round((aiChatInsight.deal.offerQuality.fairness || 0) * 100)}%</p>
+                    <p className="ai-chat-side-line">Seriousness: {Math.round((aiChatInsight.deal.offerQuality.seriousness || 0) * 100)}%</p>
+                    <p className="ai-chat-side-line">Closure: {Math.round((aiChatInsight.deal.offerQuality.likelihoodToClose || 0) * 100)}%</p>
                   </div>
-                </div>
-              </div>
-            )}
-
-            <div ref={bottomRef} />
-          </div>
-          {aiModeEnabled && aiVisibility.showDealSidebar && aiChatInsight?.deal ? (
-            <aside
-              style={{
-                borderLeft: "1px solid rgba(255,255,255,.08)",
-                background: "rgba(255,255,255,0.03)",
-                padding: "14px 12px",
-                overflowY: "auto",
-                display: "grid",
-                alignContent: "start",
-                gap: 10,
-              }}
-            >
-              <p className="ai-chat-label">Deal Sidebar</p>
-              <span className="ai-chat-pill">Price: {aiChatInsight.deal.priceEvaluation || "--"}</span>
-              <span className="ai-chat-pill">Close: {toPercent(aiChatInsight.deal?.dealSuccess?.closeProbability)}</span>
-              <span className="ai-chat-pill">
-                Time: {aiChatInsight.deal?.dealSuccess?.timeToCloseHours ?? aiChatInsight.deal?.dealSuccess?.etaHours ?? "--"}h
-              </span>
-              <span className="ai-chat-pill">Momentum: {aiChatInsight.deal?.dealMomentum || "--"}</span>
-              <div className="ai-chat-side-card">
-                <p className="ai-chat-side-title">Price insights</p>
-                <p className="ai-chat-side-line">Fast sale: Rs {aiChatInsight.deal?.multiScenarioPricing?.fastSale ?? "--"}</p>
-                <p className="ai-chat-side-line">Balanced: Rs {aiChatInsight.deal?.multiScenarioPricing?.balanced ?? "--"}</p>
-                <p className="ai-chat-side-line">Max profit: Rs {aiChatInsight.deal?.multiScenarioPricing?.maxProfit ?? "--"}</p>
-              </div>
-              {aiChatInsight.deal?.offerQuality ? (
-                <div className="ai-chat-side-card">
-                  <p className="ai-chat-side-title">Offer score</p>
-                  <p className="ai-chat-side-line">Fairness: {Math.round((aiChatInsight.deal.offerQuality.fairness || 0) * 100)}%</p>
-                  <p className="ai-chat-side-line">Seriousness: {Math.round((aiChatInsight.deal.offerQuality.seriousness || 0) * 100)}%</p>
-                  <p className="ai-chat-side-line">Closure: {Math.round((aiChatInsight.deal.offerQuality.likelihoodToClose || 0) * 100)}%</p>
-                </div>
-              ) : null}
-              {Array.isArray(aiChatInsight.deal?.structuredNegotiationGuidance) ? (
-                <div className="ai-chat-side-card">
-                  <p className="ai-chat-side-title">Negotiation flow</p>
-                  <p className="ai-chat-side-line">
-                    {aiChatInsight.deal.structuredNegotiationGuidance.join(" -> ")}
-                  </p>
-                  {aiChatInsight.deal?.negotiationSuggestions?.hint ? (
-                    <p className="ai-chat-side-line">{aiChatInsight.deal.negotiationSuggestions.hint}</p>
-                  ) : null}
-                </div>
-              ) : null}
-            </aside>
-          ) : null}
+                ) : null}
+                {Array.isArray(aiChatInsight.deal?.structuredNegotiationGuidance) ? (
+                  <div className="ai-chat-side-card">
+                    <p className="ai-chat-side-title">Negotiation flow</p>
+                    <p className="ai-chat-side-line">
+                      {aiChatInsight.deal.structuredNegotiationGuidance.join(" -> ")}
+                    </p>
+                    {aiChatInsight.deal?.negotiationSuggestions?.hint ? (
+                      <p className="ai-chat-side-line">{aiChatInsight.deal.negotiationSuggestions.hint}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </aside>
+            ) : null}
           </div>
 
           {/* ══ FOOTER ══ */}
@@ -643,7 +665,7 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
                     : null}
                 </div>
                 {aiChatInsight?.conversation?.suggestion ? (
-                  <p className="ai-chat-note">Suggested next reply: {aiChatInsight.conversation.suggestion}</p>
+                  <p className="ai-chat-note">Suggested: {aiChatInsight.conversation.suggestion}</p>
                 ) : aiChatInsight?.conversation?.suggestions?.clarificationPrompt ? (
                   <p className="ai-chat-note">{aiChatInsight.conversation.suggestions.clarificationPrompt}</p>
                 ) : null}
@@ -805,8 +827,7 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
                 value={text}
                 onChange={(e) => { setText(e.target.value); setTyping(true) }}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                onBlur={() => setTyping(false)}
-                placeholder={uploading ? "Uploading…" : "Type a message…"}
+                placeholder={uploading ? "Uploading…" : `Message ${headerName}…`}
                 disabled={uploading}
                 style={{
                   flex: 1, height: 44, borderRadius: 14,
@@ -817,6 +838,7 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
                   transition: "border-color .15s",
                 }}
                 onFocus={(e) => e.target.style.borderColor = "rgba(14,165,233,.5)"}
+                onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.08)"; setTyping(false) }}
               />
 
               {/* Send */}

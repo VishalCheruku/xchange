@@ -53,7 +53,7 @@ const Card = ({
               <div className={`w-full flex justify-center p-2 overflow-hidden ${viewMode === 'list' ? 'md:w-1/3 md:h-full md:absolute md:left-0 md:top-0' : ''}`}>
                 <img
                   className={`${viewMode === 'list' ? 'h-36 md:h-full md:object-cover w-full' : 'h-36 object-contain'}`}
-                  src={item.imageUrl || 'https://via.placeholder.com/150'}
+                  src={(Array.isArray(item.imageUrls) ? item.imageUrls[0] : item.imageUrl) || 'https://via.placeholder.com/150'}
                   alt={item.title}
                 />
               </div>

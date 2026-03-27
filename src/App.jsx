@@ -1,27 +1,32 @@
 import { Route, Routes } from 'react-router-dom'
-import Home from './Components/Pages/Home'
-import Details from './Components/Details/Details'
-import Category from './Components/Pages/Category'
-import Profile from './Components/Pages/Profile'
-import Search from './Components/Pages/Search'
-import AdminPanel from './Components/Pages/AdminPanel'
-import Chat from './Components/Pages/Chat'
+import { Suspense, lazy } from 'react'
+import LoaderX from './Components/Loader/LoaderX'
 import AIModeIndicator from './Components/AI/AIModeIndicator'
+
+const Home = lazy(() => import('./Components/Pages/Home'))
+const Details = lazy(() => import('./Components/Details/Details'))
+const Category = lazy(() => import('./Components/Pages/Category'))
+const Profile = lazy(() => import('./Components/Pages/Profile'))
+const Search = lazy(() => import('./Components/Pages/Search'))
+const AdminPanel = lazy(() => import('./Components/Pages/AdminPanel'))
+const Chat = lazy(() => import('./Components/Pages/Chat'))
 
 const App = () => {
   return (
    <>
      <AIModeIndicator />
-     <Routes>
-      <Route  path='/' element={<Home/>}/>
-      <Route  path='/details/:id' element={<Details/>}/>
-      <Route  path='/details' element={<Details/>}/>
-      <Route  path='/category/:name' element={<Category/>}/>
-      <Route  path='/profile' element={<Profile/>}/>
-      <Route  path='/search' element={<Search/>}/>
-      <Route  path='/admin' element={<AdminPanel/>}/>
-      <Route  path='/chat' element={<Chat/>}/>
-     </Routes>
+     <Suspense fallback={<LoaderX />}>
+       <Routes>
+        <Route  path='/' element={<Home/>}/>
+        <Route  path='/details/:id' element={<Details/>}/>
+        <Route  path='/details' element={<Details/>}/>
+        <Route  path='/category/:name' element={<Category/>}/>
+        <Route  path='/profile' element={<Profile/>}/>
+        <Route  path='/search' element={<Search/>}/>
+        <Route  path='/admin' element={<AdminPanel/>}/>
+        <Route  path='/chat' element={<Chat/>}/>
+       </Routes>
+     </Suspense>
    </>
   )
 }

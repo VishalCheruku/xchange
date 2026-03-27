@@ -223,7 +223,7 @@ const Profile = () => {
                       onClick={() => navigate(`/details/${it.id}`, { state: { item: it } })}
                       className="w-full text-left flex items-center gap-3 border border-slate-200 rounded-lg px-3 py-2 hover:border-sky-300 hover:shadow-sm transition"
                     >
-                      {it.imageUrl ? <img src={it.imageUrl} alt="" className="w-12 h-12 rounded-lg object-cover border border-slate-200" /> : null}
+                      { (it.images?.[0] || it.imageUrl) ? <img src={it.images?.[0] || it.imageUrl} alt="" className="w-12 h-12 rounded-lg object-cover border border-slate-200" /> : null}
                       <div className="min-w-0">
                         <p className="font-semibold text-slate-900 text-sm truncate">{it.title || 'Listing'}</p>
                         <p className="text-xs text-slate-500 truncate">{it.category || 'Uncategorized'} • Rs {it.price}</p>

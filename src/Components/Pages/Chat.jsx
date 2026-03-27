@@ -44,7 +44,10 @@ const Chat = () => {
       where("participants", "array-contains", user.uid)
     );
     const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const list = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        // ✅ FIX: Filter out empty conversations (created but no messages sent yet)
+        .filter((conv) => conv.lastMessage || conv.lastMessageType);
       list.sort((a, b) => (b.lastUpdated?.toMillis?.() || 0) - (a.lastUpdated?.toMillis?.() || 0));
       setConversations(list);
     });
@@ -60,34 +63,63 @@ const Chat = () => {
   const decorated = useMemo(() => {
     const sorted = [...conversations].sort(
       (a, b) => (b.lastUpdated?.toMillis?.() || 0) - (a.lastUpdated?.toMillis?.() || 0)
-    )
+    );
     return sorted.map((conv) => {
-      const otherId = (conv.participants || []).find((p) => p !== user?.uid) || conv.sellerId;
+      // ✅ FIX: correctly resolve the other participant's ID
+      const otherId =
+        (conv.participants || []).find((p) => p !== user?.uid) ||
+        conv.sellerId ||
+        null;
+
       const item = itemById.get(conv.itemId) || {
         id: conv.itemId,
         title: conv.itemTitle || "Listing",
         imageUrl: conv.itemImage || "",
         userId: otherId,
-        userName: conv.participantsNames?.[otherId] || conv.otherName || "User",
+        userName:
+          conv.participantsNames?.[otherId] ||
+          conv.otherName ||
+          conv.itemOwnerName ||
+          "User",
       };
+
       const lastUpdatedMs = conv.lastUpdated?.toMillis?.() || 0;
       const lastReadMs = conv.lastRead?.[user?.uid || ""]?.toMillis?.() || 0;
-      const hasUnread = !!(conv.lastMessage || conv.lastMessageType) && lastUpdatedMs > lastReadMs;
-      const displayName = item.title || conv.itemTitle || "Listing";
-      return { ...conv, item, hasUnread, displayName, otherId };
-    })
+      const hasUnread =
+        !!(conv.lastMessage || conv.lastMessageType) && lastUpdatedMs > lastReadMs;
+
+      // ✅ FIX: displayName = the OTHER person's username, not the item title
+      const otherPersonName =
+        conv.participantsNames?.[otherId] ||
+        conv.otherName ||
+        conv.itemOwnerName ||
+        item.userName ||
+        "Unknown User";
+
+      // Keep item title separately for subtitle display
+      const itemTitle = item.title || conv.itemTitle || "Listing";
+
+      return { ...conv, item, hasUnread, displayName: otherPersonName, itemTitle, otherId };
+    });
   }, [conversations, itemById, user?.uid]);
 
   const filtered = useMemo(() => {
     const s = search.toLowerCase();
-    return s ? decorated.filter((c) => (c.item?.title || "").toLowerCase().includes(s) || (c.lastMessage || "").toLowerCase().includes(s)) : decorated;
+    return s
+      ? decorated.filter(
+          (c) =>
+            (c.displayName || "").toLowerCase().includes(s) ||
+            (c.itemTitle || "").toLowerCase().includes(s) ||
+            (c.lastMessage || "").toLowerCase().includes(s)
+        )
+      : decorated;
   }, [decorated, search]);
-
 
   /* auto-select first */
   useEffect(() => {
     if (!activeConvId && filtered.length > 0) setActiveConvId(filtered[0].id);
-    if (activeConvId && filtered.every((c) => c.id !== activeConvId)) setActiveConvId(filtered[0]?.id || null);
+    if (activeConvId && filtered.every((c) => c.id !== activeConvId))
+      setActiveConvId(filtered[0]?.id || null);
   }, [filtered, activeConvId]);
 
   const activeConv = filtered.find((c) => c.id === activeConvId) || null;
@@ -95,17 +127,21 @@ const Chat = () => {
 
   const deleteConversation = async (convId) => {
     try {
-      const msgSnap = await getDocs(query(collection(fireStore, "messages"), where("conversationId", "==", convId)))
-      await Promise.all(msgSnap.docs.map((d) => deleteDoc(d.ref)))
-      const notifSnap = await getDocs(query(collection(fireStore, "notifications"), where("conversationId", "==", convId)))
-      await Promise.all(notifSnap.docs.map((d) => deleteDoc(d.ref)))
-      await deleteDoc(doc(fireStore, "conversations", convId))
-      if (activeConvId === convId) setActiveConvId(null)
+      const msgSnap = await getDocs(
+        query(collection(fireStore, "messages"), where("conversationId", "==", convId))
+      );
+      await Promise.all(msgSnap.docs.map((d) => deleteDoc(d.ref)));
+      const notifSnap = await getDocs(
+        query(collection(fireStore, "notifications"), where("conversationId", "==", convId))
+      );
+      await Promise.all(notifSnap.docs.map((d) => deleteDoc(d.ref)));
+      await deleteDoc(doc(fireStore, "conversations", convId));
+      if (activeConvId === convId) setActiveConvId(null);
     } catch (err) {
-      console.error(err)
-      alert("Failed to delete chat. Try again.")
+      console.error(err);
+      alert("Failed to delete chat. Try again.");
     }
-  }
+  };
 
   return (
     <>
@@ -115,8 +151,8 @@ const Chat = () => {
         .ch-scroll::-webkit-scrollbar { width: 4px }
         .ch-scroll::-webkit-scrollbar-track { background: transparent }
         .ch-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 8px }
-        .ch-row { transition: background .15s, transform .12s }
-        .ch-row:hover { background: rgba(255,255,255,.05) !important }
+        .ch-row { transition: background .15s, transform .12s; border: none; outline: none; }
+        .ch-row:hover { background: rgba(255,255,255,.055) !important }
         .ch-row:active { transform: scale(.99) }
         .ch-search:focus { border-color: rgba(14,165,233,.5) !important; outline: none }
         .ch-open-btn { transition: all .15s }
@@ -134,6 +170,8 @@ const Chat = () => {
         .ch-stagger:nth-child(n+6){ animation-delay: .24s }
         .ch-avatar-ring { transition: box-shadow .2s }
         .ch-row:hover .ch-avatar-ring { box-shadow: 0 0 0 2px rgba(14,165,233,.5) }
+        .ch-del-btn { opacity: 0; transition: opacity .15s }
+        .ch-row:hover .ch-del-btn { opacity: 1 }
       `}</style>
 
       <div
@@ -155,7 +193,7 @@ const Chat = () => {
 
         <Navbar toggleModal={toggleModal} toggleModalSell={toggleModalSell} />
 
-        <main style={{ position: "relative", zIndex: 1, paddingTop: 112, maxWidth: 1200, margin: "0 auto", padding: "112px 20px 40px" }}>
+        <main style={{ position: "relative", zIndex: 1, maxWidth: 1200, margin: "0 auto", padding: "112px 20px 40px" }}>
 
           {/* ── Page header ── */}
           <div className="ch-fade-in-up" style={{ marginBottom: 28, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
@@ -176,7 +214,7 @@ const Chat = () => {
               </h1>
               {aiModeEnabled ? (
                 <p style={{ marginTop: 6, fontSize: 12, color: "#67e8f9", fontWeight: 700 }}>
-                  AI Assist active: intent, negotiation, and trust signals are running in chat.
+                  AI Assist active — intent, negotiation & trust signals running in chat.
                 </p>
               ) : null}
             </div>
@@ -226,7 +264,7 @@ const Chat = () => {
                       className="ch-search"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search conversations…"
+                      placeholder="Search by name or listing…"
                       style={{
                         width: "100%", height: 40, borderRadius: 12,
                         background: "rgba(255,255,255,.06)",
@@ -252,7 +290,9 @@ const Chat = () => {
                     <div style={{ padding: "40px 20px", textAlign: "center" }}>
                       <div style={{ fontSize: 36, marginBottom: 10 }}>💬</div>
                       <p style={{ color: "#475569", fontSize: 13 }}>
-                        {search ? "No matches found." : "No conversations yet.\nMessage a seller from a listing to start a chat."}
+                        {search
+                          ? "No matches found."
+                          : "No conversations yet.\nBrowse listings and message a seller to start chatting."}
                       </p>
                     </div>
                   ) : (
@@ -270,6 +310,7 @@ const Chat = () => {
                             borderLeft: active ? "3px solid #0ea5e9" : "3px solid transparent",
                             display: "flex", gap: 12, alignItems: "center",
                             fontFamily: "inherit",
+                            position: "relative",
                           }}
                         >
                           {/* thumb */}
@@ -292,15 +333,34 @@ const Chat = () => {
                           {/* content */}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 4 }}>
-                              <p style={{ fontSize: 13, fontWeight: 700, color: active ? "#e2e8f0" : "#cbd5e1", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {conv.displayName || conv.item?.title || "Chat"}
+                              {/* ✅ FIX: Show seller/buyer username as primary name */}
+                              <p style={{
+                                fontSize: 13, fontWeight: 700,
+                                color: active ? "#e2e8f0" : "#cbd5e1",
+                                margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              }}>
+                                {conv.displayName}
                               </p>
-                            <span style={{ fontSize: 10, color: "#475569", whiteSpace: "nowrap", flexShrink: 0 }}>
-                              {fmtTime(conv.lastUpdated)}
-                            </span>
-                          </div>
-                            <p style={{ fontSize: 12, color: conv.hasUnread ? "#94a3b8" : "#475569", margin: "3px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: conv.hasUnread ? 600 : 400, fontStyle: conv.lastMessage ? "normal" : "italic" }}>
-                              {conv.lastMessage || (conv.lastMessageType === "image" ? "📷 Photo" : "No messages yet — start chatting")}
+                              <span style={{ fontSize: 10, color: "#475569", whiteSpace: "nowrap", flexShrink: 0 }}>
+                                {fmtTime(conv.lastUpdated)}
+                              </span>
+                            </div>
+                            {/* ✅ Item title as subtitle */}
+                            <p style={{
+                              fontSize: 11, color: "#38bdf8",
+                              margin: "1px 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              fontWeight: 600, opacity: 0.8,
+                            }}>
+                              {conv.itemTitle}
+                            </p>
+                            <p style={{
+                              fontSize: 12,
+                              color: conv.hasUnread ? "#94a3b8" : "#475569",
+                              margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              fontWeight: conv.hasUnread ? 600 : 400,
+                              fontStyle: conv.lastMessage ? "normal" : "italic",
+                            }}>
+                              {conv.lastMessage || (conv.lastMessageType === "image" ? "📷 Photo" : "No messages yet")}
                             </p>
                           </div>
 
@@ -352,11 +412,22 @@ const Chat = () => {
                         }
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".18em", color: "#0ea5e9", textTransform: "uppercase", margin: "0 0 4px" }}>Chat</p>
-                        <p style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9", margin: 0, letterSpacing: "-.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {(activeConv.displayName || activeConv.item?.title || "Chat")}
+                        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".18em", color: "#0ea5e9", textTransform: "uppercase", margin: "0 0 2px" }}>
+                          Conversation with
                         </p>
-                        <p style={{ fontSize: 12, color: "#475569", margin: "4px 0 0" }}>
+                        {/* ✅ FIX: Show person name as title */}
+                        <p style={{
+                          fontSize: 20, fontWeight: 800, color: "#f1f5f9",
+                          margin: 0, letterSpacing: "-.02em",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {activeConv.displayName}
+                        </p>
+                        {/* ✅ Item title as subtitle */}
+                        <p style={{ fontSize: 13, color: "#38bdf8", margin: "3px 0 0", fontWeight: 600 }}>
+                          Re: {activeConv.itemTitle}
+                        </p>
+                        <p style={{ fontSize: 12, color: "#475569", margin: "2px 0 0" }}>
                           Last activity · {fmtTime(activeConv.lastUpdated)}
                         </p>
                       </div>
@@ -374,27 +445,61 @@ const Chat = () => {
                     {/* Preview area: show latest message only */}
                     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 40px 20px", gap: 12 }}>
                       <div style={{ width: "100%", maxWidth: 420 }}>
+                        {/* Sender label */}
+                        {activeConv.lastMessage && (
+                          <p style={{ fontSize: 11, color: "#475569", margin: "0 0 6px", fontWeight: 600,
+                            textAlign: activeConv.lastSenderId === user?.uid ? "right" : "left" }}>
+                            {activeConv.lastSenderId === user?.uid
+                              ? "You"
+                              : activeConv.displayName}
+                          </p>
+                        )}
                         <div style={{ display: "flex", justifyContent: activeConv.lastSenderId === user?.uid ? "flex-end" : "flex-start" }}>
                           <div style={{
-                            padding: "10px 14px",
+                            padding: "11px 16px",
                             borderRadius: activeConv.lastSenderId === user?.uid ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                            background: activeConv.lastSenderId === user?.uid ? "linear-gradient(135deg,#0ea5e9,#2563eb)" : "rgba(255,255,255,.08)",
+                            background: activeConv.lastSenderId === user?.uid
+                              ? "linear-gradient(135deg,#0ea5e9,#2563eb)"
+                              : "rgba(255,255,255,.08)",
                             color: "#e2e8f0",
                             fontSize: 14,
+                            lineHeight: 1.5,
                             maxWidth: "80%",
-                            boxShadow: activeConv.lastSenderId === user?.uid ? "0 4px 18px rgba(14,165,233,.35)" : "0 2px 10px rgba(0,0,0,.35)",
+                            boxShadow: activeConv.lastSenderId === user?.uid
+                              ? "0 4px 18px rgba(14,165,233,.35)"
+                              : "0 2px 10px rgba(0,0,0,.35)",
                           }}>
                             {activeConv.lastMessage || (activeConv.lastMessageType === "image" ? "📷 Photo" : "No messages yet.")}
                           </div>
                         </div>
-                        <p style={{ color: "#475569", fontSize: 12, marginTop: 8 }}>
-                          {activeConv.lastMessage ? "Most recent message" : "Start chatting to see your latest message preview here."}
+                        <p style={{ color: "#475569", fontSize: 12, marginTop: 8,
+                          textAlign: activeConv.lastSenderId === user?.uid ? "right" : "left" }}>
+                          {fmtTime(activeConv.lastUpdated)}
                         </p>
                       </div>
                     </div>
 
                     {/* Actions */}
-                    <div style={{ padding: "20px 28px", borderTop: "1px solid rgba(255,255,255,.06)", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                    <div style={{ padding: "20px 28px", borderTop: "1px solid rgba(255,255,255,.06)", display: "flex", justifyContent: "flex-end", gap: 10, alignItems: "center" }}>
+                      <button
+                        onClick={() => deleteConversation(activeConv.id)}
+                        style={{
+                          background: "rgba(239,68,68,0.1)",
+                          color: "#f87171",
+                          border: "1px solid rgba(239,68,68,0.2)",
+                          borderRadius: 14,
+                          padding: "12px 16px",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          transition: "all .15s",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.18)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.1)"; }}
+                      >
+                        🗑 Delete
+                      </button>
                       <button
                         className="ch-open-btn"
                         onClick={() => setShowChat(true)}
@@ -412,23 +517,6 @@ const Chat = () => {
                         </svg>
                         Open Chat
                       </button>
-                      {activeConv && (
-                        <button
-                          onClick={() => deleteConversation(activeConv.id)}
-                          style={{
-                            background: "rgba(239,68,68,0.12)",
-                            color: "#f87171",
-                            border: "1px solid rgba(239,68,68,0.25)",
-                            borderRadius: 14,
-                            padding: "12px 16px",
-                            fontWeight: 700,
-                            fontSize: 14,
-                            cursor: "pointer",
-                          }}
-                        >
-                          Delete Chat
-                        </button>
-                      )}
                     </div>
                   </>
                 ) : (

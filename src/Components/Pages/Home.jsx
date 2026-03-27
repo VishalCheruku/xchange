@@ -352,7 +352,7 @@ const Home = () => {
             </div>
             <div className="stat-card">
               <p className="stat-title">Categories</p>
-              <p className="stat-value">{Math.max(categories.length - 1, 6)}</p>
+              <p className="stat-value">{Math.max((categories.length || 1) - 1, 0)}</p>
             </div>
             <div className="stat-card">
               <p className="stat-title">Favorites</p>

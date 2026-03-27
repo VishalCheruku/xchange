@@ -50,6 +50,18 @@ const Details = () => {
   const [aiInsights, setAIInsights] = useState(null)
   const [aiLoading, setAILoading] = useState(false)
   const conversationId = item && user ? `${item.id}_${[item.userId, user.uid].sort().join('_')}` : null
+  const gallery = useMemo(() => {
+    if (!item) return []
+    if (Array.isArray(item.images) && item.images.length) return item.images
+    if (Array.isArray(item.imageUrls) && item.imageUrls.length) return item.imageUrls
+    if (item.imageUrl) return [item.imageUrl]
+    return []
+  }, [item])
+  const [activeImage, setActiveImage] = useState(0)
+
+  useEffect(() => {
+    setActiveImage(0)
+  }, [item?.id])
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }) }, [item?.id])
 
   const priceStats = useMemo(() => {
@@ -368,6 +380,8 @@ const Details = () => {
     ? (reviews.reduce((sum, r) => sum + (Number(r.rating) || 0), 0) / reviews.length).toFixed(1)
     : null
 
+  const parsedPrice = useMemo(() => Number(String(item?.price || '').replace(/[^\d.]/g, '')), [item?.price])
+
   const scoreOfferClient = (amount) => {
     const offer = Number(amount)
     const listPrice = Number(item?.price)
@@ -430,12 +444,33 @@ const Details = () => {
           <Login toggleModal={toggleModal} status={openModal} />
 
           <div className="grid gap-0 sm:gap-5 grid-cols-1 sm:grid-cols-1 md:grid-cols-2 p-10 px-5 sm:px-15 md:px-30 lg:px-40">
-              <div className="border-2 w-full rounded-lg flex justify-center overflow-hidden h-96 bg-white/80">
+              <div className="w-full">
+                <div className="border-2 w-full rounded-lg flex justify-center overflow-hidden h-96 bg-white/80">
+                    {item?.videoUrl && activeImage === -1 ? (
+                      <video className="w-full h-full object-contain bg-black" src={item.videoUrl} controls poster={gallery[0]} />
+                    ) : (
+                      <img className="object-contain w-full h-full bg-white" src={gallery[activeImage] || item?.imageUrl || 'https://via.placeholder.com/400'} alt={item?.title} />
+                    )}
+                </div>
+                <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                   {item?.videoUrl ? (
-                    <video className="w-full h-full object-cover" src={item.videoUrl} controls poster={item?.imageUrl} />
-                  ) : (
-                    <img className="object-cover w-full" src={item?.imageUrl} alt={item?.title} />
-                  )}
+                    <button
+                      onClick={() => setActiveImage(-1)}
+                      className={`h-16 w-24 flex-shrink-0 border rounded-lg overflow-hidden ${activeImage === -1 ? 'ring-2 ring-sky-400' : ''}`}
+                    >
+                      <video className="h-full w-full object-cover" src={item.videoUrl} />
+                    </button>
+                  ) : null}
+                  {gallery.map((src, idx) => (
+                    <button
+                      key={`${src}_${idx}`}
+                      onClick={() => setActiveImage(idx)}
+                      className={`h-16 w-24 flex-shrink-0 border rounded-lg overflow-hidden ${activeImage === idx ? 'ring-2 ring-sky-400' : ''}`}
+                    >
+                      <img className="h-full w-full object-cover" src={src} alt={`thumb-${idx}`} />
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="flex flex-col relative w-full">
                   <div className="flex items-start justify-between gap-3">
@@ -567,6 +602,15 @@ const Details = () => {
                 />
                 <button className="xchange-btn w-full sm:w-auto" onClick={sendOffer}>Send offer</button>
               </div>
+              {aiModeEnabled ? (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <button className="chip" onClick={() => setOfferValue(String(Math.max(1, Math.round(parsedPrice * 0.92) || '')))}>Offer 8% less</button>
+                  <button className="chip" onClick={() => setOfferValue(String(Math.round(parsedPrice * 0.97) || ''))}>Counter -3%</button>
+                  <button className="chip" onClick={() => setOfferValue(String(Math.round(parsedPrice) || ''))}>Match price</button>
+                  <button className="chip" onClick={() => setOfferValue('')}>Clear</button>
+                  <button className="chip" onClick={() => setOfferValue(String(Math.round(parsedPrice * 1.05) || ''))}>Sweeten (+5%)</button>
+                </div>
+              ) : null}
               {aiModeEnabled && aiInsights?.deal?.structuredNegotiationGuidance ? (
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
                   {aiInsights.deal.structuredNegotiationGuidance.map((step) => (

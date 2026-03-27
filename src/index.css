@@ -637,10 +637,24 @@
   100% { transform: scaleX(1); opacity: 1; }
 }
 
-.xchange-modal-layer {
-  z-index: 1200 !important;
-}
+  .xchange-modal-layer {
+    z-index: 1200 !important;
+  }
 
-.xchange-modal-layer > div {
-  z-index: 1200 !important;
-}
+  .xchange-modal-layer > div {
+    z-index: 1200 !important;
+  }
+
+  .animate-spin-slow {
+    animation: spinSlow 2.6s linear infinite;
+  }
+
+  @keyframes spinSlow {
+    to { transform: rotate(360deg); }
+  }
+  .fill-x {
+    background: linear-gradient(135deg, #0f172a, #0ea5e9);
+    transform-origin: left;
+    animation: fill-x 1.6s ease-in-out infinite;
+    filter: drop-shadow(0 10px 25px rgba(14,165,233,0.35));
+  }
