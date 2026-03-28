@@ -1,21 +1,20 @@
 
 import { initializeApp } from "firebase/app";
-import {getAuth, GoogleAuthProvider } from "firebase/auth"; 
-import {getStorage} from 'firebase/storage'
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 import { collection, getDocs, getFirestore } from "firebase/firestore";
 import { getAnalytics } from "firebase/analytics";
 
-
+// New Firebase project config
 const firebaseConfig = {
-  apiKey: "AIzaSyD6rvF4zBabKRvOaf0mqGm7yF7jWRo9t6Q",
-  authDomain: "xchange-cafe4.firebaseapp.com",
-  projectId: "xchange-cafe4",
-  storageBucket: "xchange-cafe4.firebasestorage.app",
-  messagingSenderId: "513797235238",
-  appId: "1:513797235238:web:1cf7a26e08b0836c843ce7",
-  measurementId: "G-655RBNCLW7"
+  apiKey: "AIzaSyBgDajegNHhBUhGN7cKXYTkFI1X1mg_THw",
+  authDomain: "xchange-555555.firebaseapp.com",
+  projectId: "xchange-555555",
+  // Use the appspot bucket domain (required for Storage API)
+  storageBucket: "xchange-555555.appspot.com",
+  messagingSenderId: "392393991994",
+  appId: "1:392393991994:web:b1c8a4e2de3c9579315203"
 };
-
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
