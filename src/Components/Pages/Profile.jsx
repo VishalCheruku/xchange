@@ -55,6 +55,20 @@ const Profile = () => {
     return () => unsub()
   }, [user?.uid])
 
+  const handleWithdrawOffer = async (offerId) => {
+    if (!offerId) return
+    try {
+      const { deleteDoc, doc } = await import('firebase/firestore')
+      await deleteDoc(doc(fireStore, 'offers', offerId))
+      setStatus('Offer withdrawn successfully.')
+      setTimeout(() => setStatus(''), 3000)
+    } catch (err) {
+      console.error(err)
+      setStatus('Failed to withdraw offer. Try again.')
+      setTimeout(() => setStatus(''), 3000)
+    }
+  }
+
   const persistExtras = (payload) => {
     const latestRaw = localStorage.getItem(STORAGE_KEY) || '{}'
     let latest = {}
@@ -203,9 +217,17 @@ const Profile = () => {
                         <p className="font-semibold text-slate-900 text-sm truncate">{offer.itemTitle || 'Listing'}</p>
                         <p className="text-xs text-slate-500 truncate">Rs {offer.amount} • {offer.status}</p>
                       </div>
-                      {offer.itemImage ? (
-                        <img src={offer.itemImage} alt="" className="w-12 h-12 rounded-lg object-cover border border-slate-200" />
-                      ) : null}
+                      <div className="flex items-center gap-2">
+                        {offer.itemImage ? (
+                          <img src={offer.itemImage} alt="" className="w-12 h-12 rounded-lg object-cover border border-slate-200" />
+                        ) : null}
+                        <button
+                          onClick={() => handleWithdrawOffer(offer.id)}
+                          className="px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-300 rounded-md hover:bg-red-50 hover:border-red-300 hover:text-red-600 transition"
+                        >
+                          Withdraw
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

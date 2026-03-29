@@ -137,7 +137,7 @@ const Navbar = (props) => {
 
     const goToMyListings = () => {
       setMenuOpen(false)
-      navigate('/profile#my-listings')
+      navigate('/my-listings')
     }
 
     const handleLogout = async () => {

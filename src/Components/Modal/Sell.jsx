@@ -186,12 +186,27 @@ const Sell = (props) => {
 
   return (
     <div>
-        <Modal  theme={{
-             "content": {
-                "base": "relative w-full p-4 md:h-auto",
-                "inner": "relative flex max-h-[92dvh] max-w-[900px] w-full mx-auto flex-col rounded-3xl bg-white shadow-2xl overflow-hidden"
+        <Modal
+          theme={{
+            root: {
+              base: "fixed inset-0 z-[3000] flex h-full w-full items-center justify-center overflow-y-auto overflow-x-hidden bg-black/60 backdrop-blur-sm",
+              show: {
+                on: "flex",
+                off: "hidden"
+              }
             },
-        }}  onClick={toggleModalSell} show={status}  className="bg-black"  position={'center'}  size="xl" popup= {true}>
+            content: {
+              base: "relative w-full p-4 md:h-auto",
+              inner: "relative flex max-h-[92dvh] max-w-[900px] w-full mx-auto flex-col rounded-3xl bg-white shadow-2xl overflow-hidden"
+            },
+          }}
+          onClick={toggleModalSell}
+          show={status}
+          className=""
+          position={'center'}
+          size="xl"
+          popup={true}
+        >
             <ModalBody  className="bg-gradient-to-br from-sky-50 via-white to-white p-0 rounded-3xl h-full overflow-auto"   onClick={(event) => event.stopPropagation()}>
                 <img 
                 onClick={()=>{
