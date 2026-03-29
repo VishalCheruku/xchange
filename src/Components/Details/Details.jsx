@@ -5,6 +5,7 @@ import { ItemsContext } from '../Context/Item';
 import Login from "../Modal/Login";
 import Sell from "../Modal/Sell";
 import Card from "../Card/Card";
+import StarRating from "../UI/StarRating";
 import { auth, fireStore } from "../Firebase/Firebase";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { addDoc, collection, doc, onSnapshot, query, updateDoc, where, setDoc, serverTimestamp } from "firebase/firestore";
@@ -475,7 +476,7 @@ const Details = () => {
               <div className="flex flex-col relative w-full">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="p-1 pl-0 text-2xl font-bold text-slate-900">Rs {isEditing ? editPrice : currentPrice}</p>
+                      <p className="p-1 pl-0 text-2xl font-bold text-slate-900">Rs {String(isEditing ? editPrice : currentPrice).includes('/-') ? (isEditing ? editPrice : currentPrice) : `${isEditing ? editPrice : currentPrice}/-`}</p>
                       <p className="p-1 pl-0 text-base text-slate-500">{isEditing ? editCategory : currentCategory}</p>
                       <p className="p-1 pl-0 text-xl font-bold text-slate-900">{isEditing ? editTitle : currentTitle}</p>
                       {priceStats ? (
@@ -611,15 +612,6 @@ const Details = () => {
                   <button className="chip" onClick={() => setOfferValue(String(Math.round(parsedPrice * 1.05) || ''))}>Sweeten (+5%)</button>
                 </div>
               ) : null}
-              {aiModeEnabled && aiInsights?.deal?.structuredNegotiationGuidance ? (
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                  {aiInsights.deal.structuredNegotiationGuidance.map((step) => (
-                    <span key={step} className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-semibold">
-                      {step}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
               <div className="mt-4 space-y-3">
                 {offers.length === 0 ? (
                   <p className="text-sm text-slate-500">No offers yet. Be the first.</p>
@@ -652,28 +644,32 @@ const Details = () => {
 
             <div className="stat-card">
               <div className="flex items-center justify-between">
-                <p className="section-title text-xl">Reviews</p>
-                <div className="flex items-center gap-2">
-                  {avgRating ? <p className="text-sm text-slate-600">{avgRating}★ avg</p> : null}
-                  <button
-                    className="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 transition"
-                    onClick={() => setShowReviews((v) => !v)}
-                  >
-                    {showReviews ? 'Hide' : 'View'} reviews ({reviews.length})
-                  </button>
+                <div className="flex items-center gap-3">
+                  <p className="section-title text-xl">Reviews</p>
+                  {avgRating ? (
+                    <div className="flex items-center gap-2">
+                      <StarRating rating={Math.round(avgRating)} readOnly={true} size="sm" />
+                      <p className="text-sm text-slate-600 font-semibold">{avgRating}</p>
+                    </div>
+                  ) : null}
                 </div>
+                <button
+                  className="text-xs px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 transition"
+                  onClick={() => setShowReviews((v) => !v)}
+                >
+                  {showReviews ? 'Hide' : 'View'} reviews ({reviews.length})
+                </button>
               </div>
               <div className="mt-3">
-                <div className="flex items-center gap-2">
-                  {[1,2,3,4,5].map((star) => (
-                    <button
-                      key={star}
-                      onClick={() => setRating(star)}
-                      className={`w-10 h-10 rounded-full border star-btn ${star <= rating ? 'active' : 'border-slate-200 text-slate-500 bg-white'}`}
-                    >
-                      ★
-                    </button>
-                  ))}
+                <div className="flex items-center gap-4">
+                  <StarRating rating={rating} onRatingChange={setRating} size="lg" />
+                  <span className="text-sm text-slate-600">
+                    {rating === 5 && 'Excellent!'}
+                    {rating === 4 && 'Good'}
+                    {rating === 3 && 'Average'}
+                    {rating === 2 && 'Poor'}
+                    {rating === 1 && 'Terrible'}
+                  </span>
                 </div>
                 <textarea
                   value={reviewText}
@@ -700,7 +696,7 @@ const Details = () => {
                           <p className="text-[11px] text-slate-500">{formatDate(rev.createdAt)}</p>
                         </div>
                       </div>
-                      <span className="text-amber-500 font-semibold text-sm px-3 py-1 bg-amber-50 rounded-full">{rev.rating}★</span>
+                      <StarRating rating={rev.rating || 5} readOnly={true} size="sm" />
                     </div>
                     <p className="text-sm text-slate-600 mt-2 leading-relaxed">{rev.text}</p>
                   </div>

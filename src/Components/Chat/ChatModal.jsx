@@ -83,6 +83,7 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
   const [aiChatInsight, setAIChatInsight] = useState(null)
   const [aiError, setAIError] = useState(null)
   const [lastAnalyzedMessageId, setLastAnalyzedMessageId] = useState(null)
+  const [aiSuggestion, setAISuggestion] = useState("")
 
   const {
     aiModeEnabled, toneGuardEnabled, setToneGuardEnabled,
@@ -160,11 +161,169 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
 
   const applyLocalToneGuard = (rawText) => {
     if (!toneGuardEnabled) return rawText
-    const harsh = /\b(stupid|idiot|nonsense|shut up)\b/gi
-    if (!harsh.test(rawText)) return rawText
-    const cleaned = rawText.replace(harsh, "").replace(/\s{2,}/g, " ").trim()
-    return `Please clarify this for me. ${cleaned}`.trim()
+
+    let cleaned = String(rawText)
+
+    // 1. Replace harsh/offensive words and phrases
+    const harshReplacements = [
+      [/\bstupid\b/gi, "unclear"],
+      [/\bidiot\b/gi, "mistaken"],
+      [/\bfool\b/gi, "person"],
+      [/\basshole\b/gi, "person"],
+      [/\bshut\s+up\b/gi, "quiet"],
+      [/\bdumb\b/gi, "not making sense"],
+      [/\b(rip.?off|scam|fraud)\b/gi, "overpriced"],
+      [/\bgarbage\b/gi, "not good"],
+      [/\btrash\b/gi, "poor quality"],
+      [/\bsucks\b/gi, "doesn't work well"],
+      [/\bpathetic\b/gi, "disappointing"],
+      [/\bawful\b/gi, "not great"],
+      [/\bhorrible\b/gi, "not ideal"],
+      [/\bterrible\b/gi, "not good"],
+      [/\bwaste|wasting\b/gi, "spend"],
+      [/\btake\s+it\s+or\s+leave\s+it\b/gi, "consider it"],
+      [/\bno\s+way\b/gi, "unlikely"],
+      [/\bfinal\s+offer\b/gi, "best offer"],
+      [/\bdon'?t\s+care\b/gi, "neutral about"],
+      [/\blying|liar\b/gi, "unclear"],
+      [/\bworthless\b/gi, "not valuable"],
+      [/\bhate\b/gi, "don't prefer"],
+      [/\bdisgusting\b/gi, "undesirable"],
+      [/\bcheap\b/gi, "affordable"],
+      [/\bruin|ruined\b/gi, "damaged"],
+      [/\buseless\b/gi, "not useful"],
+      [/\bgarbage\b/gi, "not good"],
+      [/\bcrap\b/gi, "not good"],
+      [/\bworthless\b/gi, "not valuable"],
+      [/\bnasty\b/gi, "not kind"],
+      [/\bshady\b/gi, "unclear"],
+      [/\bscrew you\b/gi, ""],
+    ]
+
+    harshReplacements.forEach(([pattern, replacement]) => {
+      cleaned = cleaned.replace(pattern, replacement)
+    })
+
+    // 2. Tone adjustments
+    const text_lower = cleaned.toLowerCase()
+
+    const isAggressive = /\b(must|immediately|now|asap|hurry|urgent|final|non-negotiable)\b/i.test(text_lower) ||
+      /[!?]{2,}/.test(cleaned)
+    if (isAggressive) {
+      cleaned = cleaned
+        .replace(/\bMUST\b/gi, 'should')
+        .replace(/\bIMMEDIATELY\b/gi, 'soon')
+        .replace(/\bNOW\b/gi, 'when available')
+        .replace(/\bASAP\b/gi, 'at your convenience')
+        .replace(/\bURGENT\b/gi, 'important')
+        .replace(/\bFINAL\b/gi, 'best')
+        .replace(/\bNON-NEGOTIABLE\b/gi, 'preferred')
+        .replace(/[!?]{2,}/g, (m) => m[0])
+      if (!/[?.!]$/.test(cleaned)) cleaned += '?'
+    }
+
+    const isHesitant = /\b(maybe|might|perhaps|possibly|not sure|hesitant|unsure)\b/i.test(text_lower) &&
+      !cleaned.match(/\b(definitely|absolutely|certainly|sure)\b/i)
+    if (isHesitant) {
+      cleaned = cleaned.replace(/^(.)/i, (m) => m.charAt(0).toUpperCase())
+      if (!cleaned.match(/\b(can|could|will|would|should)\b/i)) {
+        cleaned = `I'm interested to ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}`
+      }
+    }
+
+    const isPassive = /^(seems|looks|appears|might be|could be|appears to be)\b/i.test(text_lower) &&
+      !cleaned.match(/\b(can|could|would|should|did|can you)\b/i)
+    if (isPassive) {
+      cleaned = `Could you confirm that ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}`
+    }
+
+    cleaned = cleaned.replace(/\s{2,}/g, " ").trim()
+    return cleaned || 'Please clarify your message.'
   }
+
+  /* ─── Generate AI suggestions ────────────────────────────────────── */
+  const generateAISuggestion = (inputText) => {
+    if (!aiModeEnabled || !inputText.trim()) {
+      setAISuggestion("")
+      return
+    }
+    
+    const lower = inputText.toLowerCase().trim()
+    let matched = false
+
+    // Offer-related suggestions - only show if pattern matches exactly
+    if (/^i want to make\s*$/i.test(lower)) {
+      setAISuggestion("I want to make an offer of Rs " + (item?.price ? Math.round(Number(item.price) * 0.9) : "----"))
+      matched = true
+    } else if (/^i can\s*$/i.test(lower)) {
+      setAISuggestion("I can pick it up today if you're available")
+      matched = true
+    } else if (/^is it\s*$/i.test(lower)) {
+      setAISuggestion("Is it still available?")
+      matched = true
+    } else if (/^what.?s\s*$/i.test(lower)) {
+      setAISuggestion("What's the best price you can do?")
+      matched = true
+    } else if (/^can you\s*$/i.test(lower)) {
+      setAISuggestion("Can you hold it for 2 hours?")
+      matched = true
+    } else if (/^i.?m interested\s*$/i.test(lower)) {
+      setAISuggestion("I'm interested. Can we negotiate on the price?")
+      matched = true
+    } else if (/^how about\s*$/i.test(lower)) {
+      setAISuggestion("How about Rs " + (item?.price ? Math.round(Number(item.price) * 0.85) : "----") + "?")
+      matched = true
+    } else if (/^when can\s*$/i.test(lower)) {
+      setAISuggestion("When can I come to see it?")
+      matched = true
+    } else if (/^whats.*condition\s*$/i.test(lower)) {
+      setAISuggestion("What's the condition of the item?")
+      matched = true
+    } else if (/^any discount\s*$/i.test(lower)) {
+      setAISuggestion("Any discount if I buy today?")
+      matched = true
+    } else if (/^i.?m coming\s*$/i.test(lower) || /^eta\s*$/i.test(lower)) {
+      setAISuggestion("I'm coming. ETA 30 minutes. See you soon!")
+      matched = true
+    } else if (/^thanks\s*$/i.test(lower)) {
+      setAISuggestion("Thanks! I'll contact you soon.")
+      matched = true
+    } else if (/^best price\s*$/i.test(lower)) {
+      setAISuggestion("Best price you can offer?")
+      matched = true
+    } else if (/^when available\s*$/i.test(lower)) {
+      setAISuggestion("When are you available for pickup?")
+      matched = true
+    } else if (/^condition\s*$/i.test(lower)) {
+      setAISuggestion("Condition of the item?")
+      matched = true
+    } else if (/^lowest\s*$/i.test(lower)) {
+      setAISuggestion("Lowest you'll go?")
+      matched = true
+    }
+
+    // Clear suggestion if no pattern matched
+    if (!matched) {
+      setAISuggestion("")
+    }
+  }
+
+  /* ─── Handle Tab key for suggestion acceptance ────────────────────── */
+  const handleInputKeyDown = (e) => {
+    if (e.key === "Tab" && aiSuggestion) {
+      e.preventDefault()
+      setText(aiSuggestion)
+      setAISuggestion("")
+    } else if (e.key === "Enter" && !e.shiftKey && text.trim()) {
+      e.preventDefault()
+      sendMessage()
+    }
+  }
+
+  /* ─── Update suggestion on text change ──────────────────────────────── */
+  useEffect(() => {
+    generateAISuggestion(text)
+  }, [text, aiModeEnabled, item?.price])
 
   /* ─── Close emoji picker on outside click ───────────────────── */
   useEffect(() => {
@@ -663,17 +822,26 @@ const ChatModal = ({ open, onClose, item, user, conversationId: conversationIdPr
                 <button onClick={()=>setToneGuardEnabled(p=>!p)} className={`ai-tone-toggle ${toneGuardEnabled?"active":""}`} title="Tone correction before send">Tone</button>
               )}
 
-              <input
-                ref={inputRef}
-                value={text}
-                onChange={e=>{setText(e.target.value);setTyping(true)}}
-                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage()}}}
-                onFocus={e=>e.target.style.borderColor="rgba(14,165,233,.5)"}
-                onBlur={e=>{e.target.style.borderColor="rgba(255,255,255,.08)";setTyping(false)}}
-                placeholder={uploading?"Uploading…":`Message ${headerName}…`}
-                disabled={uploading}
-                style={{flex:1,height:44,borderRadius:14,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.08)",color:"#f1f5f9",padding:"0 16px",fontSize:14,fontFamily:"inherit",outline:"none",transition:"border-color .15s"}}
-              />
+              <div style={{flex:1,position:"relative"}}>
+                <input
+                  ref={inputRef}
+                  value={text}
+                  onChange={e=>{setText(e.target.value);setTyping(true)}}
+                  onKeyDown={handleInputKeyDown}
+                  onFocus={e=>e.target.style.borderColor="rgba(14,165,233,.5)"}
+                  onBlur={e=>{e.target.style.borderColor="rgba(255,255,255,.08)";setTyping(false)}}
+                  placeholder={uploading?"Uploading…":`Message ${headerName}…`}
+                  disabled={uploading}
+                  style={{width:"100%",height:44,borderRadius:14,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.08)",color:"#f1f5f9",padding:"0 16px",fontSize:14,fontFamily:"inherit",outline:"none",transition:"border-color .15s",boxSizing:"border-box"}}
+                />
+                {aiSuggestion && text.trim() && (
+                  <div style={{position:"absolute",left:16,top:12,color:"rgba(255,255,255,.35)",fontSize:14,fontFamily:"inherit",pointerEvents:"none",paddingRight:16}}>
+                    <span style={{visibility:"hidden"}}>{text}</span>
+                    <span style={{color:"rgba(255,255,255,.35)"}}>{aiSuggestion.slice(text.length)}</span>
+                    <div style={{fontSize:11,marginTop:2,color:"rgba(148,163,184,.6)"}}>Press <kbd style={{background:"rgba(255,255,255,.1)",padding:"2px 6px",borderRadius:4,color:"rgba(255,255,255,.7)"}}>Tab</kbd> to complete</div>
+                  </div>
+                )}
+              </div>
 
               <button onClick={()=>sendMessage()} disabled={uploading||(!text.trim()&&!pendingFile)} className="cm-send-btn"
                 style={{width:44,height:44,borderRadius:14,flexShrink:0,background:text.trim()||pendingFile?"linear-gradient(135deg,#0ea5e9,#2563eb)":"rgba(255,255,255,.06)",border:"none",cursor:text.trim()||pendingFile?"pointer":"default",color:"#fff",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:text.trim()?"0 4px 16px rgba(14,165,233,.35)":"none",transition:"all .15s"}}>

@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState, useDeferredValue } from 'react'
+import { Link } from 'react-router-dom'
 import Navbar from '../Navbar/Navbar'
 import Login from '../Modal/Login'
 import Sell from '../Modal/Sell'
 import Card from '../Card/Card'
 import { ItemsContext } from '../Context/Item'
-import { auth } from '../Firebase/Firebase'
+import { auth, fireStore } from '../Firebase/Firebase'
+import { collection, onSnapshot } from 'firebase/firestore'
 import { useAuthState } from 'react-firebase-hooks/auth'
 import { useAIMode } from '../Context/AIMode'
 
@@ -20,6 +22,7 @@ const Home = () => {
   const [showFavorites, setShowFavorites] = useState(false)
   const [viewMode, setViewMode] = useState('grid')
   const [favModal, setFavModal] = useState(false)
+  const [offerItemIds, setOfferItemIds] = useState(new Set())
   const [user] = useAuthState(auth)
   const {
     aiModeEnabled,
@@ -54,6 +57,16 @@ const Home = () => {
   useEffect(() => {
     localStorage.setItem('xchange_recent', JSON.stringify(recentIds))
   }, [recentIds])
+
+  // Track items that have offers so active listing count can exclude them
+  useEffect(() => {
+    const offersRef = collection(fireStore, 'offers')
+    const unsub = onSnapshot(offersRef, (snap) => {
+      const ids = new Set(snap.docs.map((d) => d.data()?.itemId).filter(Boolean))
+      setOfferItemIds(ids)
+    })
+    return () => unsub()
+  }, [])
 
   const categories = useMemo(() => {
     const items = itemsCtx.items || []
@@ -187,6 +200,16 @@ const Home = () => {
     const items = itemsCtx.items || []
     return [...items].sort((a, b) => getDateValue(b) - getDateValue(a))
   }, [itemsCtx.items])
+
+  const newTodayCount = useMemo(() => {
+    const items = itemsCtx.items || []
+    return items.filter((it) => getDateValue(it) > Date.now() - 86400000).length
+  }, [itemsCtx.items])
+
+  const activeCount = useMemo(() => {
+    const items = itemsCtx.items || []
+    return Math.max(0, items.length - offerItemIds.size)
+  }, [itemsCtx.items, offerItemIds])
 
   const baseRecommendations = filteredItems.length > 0 ? filteredItems : latestItems
   const recommendations = personalizedRecommendations?.length ? personalizedRecommendations : baseRecommendations
@@ -348,7 +371,7 @@ const Home = () => {
           <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="stat-card">
               <p className="stat-title">Active listings</p>
-              <p className="stat-value">{filteredItems.length}</p>
+              <p className="stat-value">{activeCount}</p>
             </div>
             <div className="stat-card">
               <p className="stat-title">Categories</p>
@@ -360,7 +383,7 @@ const Home = () => {
             </div>
             <div className="stat-card">
               <p className="stat-title">New today</p>
-              <p className="stat-value">{filteredItems.filter((item) => getDateValue(item) > Date.now() - 86400000).length}</p>
+              <p className="stat-value">{newTodayCount}</p>
             </div>
           </div>
         </div>
@@ -395,17 +418,6 @@ const Home = () => {
 
      <section className="px-5 sm:px-12 md:px-20 lg:px-32">
       <div className="filter-bar" id="listings">
-        <div className="flex flex-wrap gap-2">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`chip ${selectedCategory === cat ? 'chip-active' : ''}`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
         <div className="filter-controls">
           <div className="control">
             <label>Sort</label>
@@ -423,13 +435,6 @@ const Home = () => {
           <div className="control">
             <label>Max price</label>
             <input value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} placeholder="99999" />
-          </div>
-          <div className="control">
-            <label>View</label>
-            <div className="view-toggle">
-              <button onClick={() => setViewMode('grid')} className={viewMode === 'grid' ? 'active' : ''}>Grid</button>
-              <button onClick={() => setViewMode('list')} className={viewMode === 'list' ? 'active' : ''}>List</button>
-            </div>
           </div>
           <button onClick={() => setFavModal(true)} className="favorite-toggle">
             View favorites
@@ -494,16 +499,16 @@ const Home = () => {
               {favoriteItems.length === 0 ? (
                 <p className="text-slate-500">No favorites yet.</p>
               ) : favoriteItems.map((it) => (
-                <div key={it.id} className="border border-slate-200 rounded-xl overflow-hidden bg-white hover:shadow-md transition">
+                <Link key={it.id} to={`/details/${it.id}`} state={{ item: it }} className="border border-slate-200 rounded-xl overflow-hidden bg-white hover:shadow-md transition">
                   <div className="h-32 bg-slate-100 flex items-center justify-center overflow-hidden">
-                    <img src={it.imageUrl || 'https://via.placeholder.com/150'} alt={it.title} className="h-full w-full object-cover" />
+                    <img src={it.imageUrl || (Array.isArray(it.images) ? it.images[0] : '') || 'https://images.unsplash.com/photo-1505691938895-1758d7feb511?auto=format&fit=crop&w=800&q=80'} alt={it.title} className="h-full w-full object-cover" />
                   </div>
                   <div className="p-3 text-left">
                     <p className="text-sm text-slate-500 uppercase tracking-wide">{it.category}</p>
                     <p className="font-semibold text-slate-900 line-clamp-2">{it.title}</p>
-                    <p className="text-slate-700 font-bold mt-1">Rs {it.price}</p>
+                    <p className="text-slate-700 font-bold mt-1">Rs {String(it.price).includes('/-') ? it.price : `${it.price}/-`}</p>
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           </div>

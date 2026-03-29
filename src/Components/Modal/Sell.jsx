@@ -3,7 +3,8 @@ import { useState } from "react"
 import Input from "../Input/Input"
 import { UserAuth } from "../Context/Auth"
 import { addDoc, collection } from "firebase/firestore"
-import { fetchFromFirestore, fireStore } from "../Firebase/Firebase"
+import { fetchFromFirestore, fireStore, storage } from "../Firebase/Firebase"
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage"
 import fileUpload from '../../assets/fileUpload.svg'
 import loading from '../../assets/loading.gif'
 import close from '../../assets/close.svg'
@@ -17,7 +18,8 @@ const Sell = (props) => {
     const [category,setCategory] = useState('')
     const [price,setPrice] = useState('')
     const [description,setDescription] = useState('')
-    const [image,setImage] = useState(null)
+    const [images, setImages] = useState([]) // Array of up to 6 images
+    const [video,setVideo] = useState(null)
 
     const [submitting,setSubmitting] = useState(false)
 
@@ -26,6 +28,7 @@ const Sell = (props) => {
     const MAX_FILE_MB = 8
     const MAX_DIMENSION = 1600
     const JPEG_QUALITY = 0.78
+    const MAX_IMAGES = 6
 
     const handleImageUpload = (event)=>{
         const file = event.target.files?.[0]
@@ -39,7 +42,33 @@ const Sell = (props) => {
             alert(`Image is too large. Please choose a file under ${MAX_FILE_MB}MB.`)
             return
         }
-        setImage(file)
+        
+        // Check if we already have max images
+        if(images.length >= MAX_IMAGES){
+            alert(`You can upload a maximum of ${MAX_IMAGES} images.`)
+            return
+        }
+        
+        setImages([...images, file])
+    }
+
+    const removeImage = (indexToRemove) => {
+        setImages(images.filter((_, index) => index !== indexToRemove))
+    }
+
+    const handleVideoUpload = (event)=>{
+        const file = event.target.files?.[0]
+        if(!file) return
+        if(!file.type.startsWith('video/')){
+            alert('Please upload a valid video file')
+            return
+        }
+        const sizeMb = file.size / (1024 * 1024)
+        if(sizeMb > 120){
+            alert('Video too large. Keep it under 120MB for smooth upload.')
+            return
+        }
+        setVideo(file)
     }
     
     const handleSubmit = async (event)=>{
@@ -107,45 +136,71 @@ const Sell = (props) => {
             })
         }
 
-        let imageUrl = '';
-        if(image){
-            try {
-                if (image.type === 'image/svg+xml') {
-                    imageUrl = await readImageAsDataUrl(image)
-                } else if (image.size <= 150 * 1024) {
-                    imageUrl = await readImageAsDataUrl(image)
-                } else {
-                    const optimizedBlob = await resizeImage(image)
-                    imageUrl = await readImageAsDataUrl(optimizedBlob)
-                }
-            } catch (error) {
-                console.log(error)
-                alert('Failed to process image');
-                setSubmitting(false)
-                return;
-            }
+        let videoUrl = '';
+        if(video){
+            const vidRef = ref(storage, `videos/${auth.user.uid}/${Date.now()}_${video.name}`)
+            const snap = await uploadBytes(vidRef, video)
+            videoUrl = await getDownloadURL(snap.ref)
         }
 
         const trimmedTitle = title.trim();
         const trimmedCategory = category.trim();
         const trimmedPrice = price.trim();
-        const trimmedDescription = description.trim();
-  
+        const trimmedDescription = description.trim()
 
-        if(!trimmedTitle || !trimmedCategory ||!trimmedPrice || !trimmedDescription  ){
+        if(!trimmedTitle || !trimmedCategory ||!trimmedPrice || !trimmedDescription){
             alert('All fields are required');
+            setSubmitting(false)
+            return;
+        }
+
+        // Images are optional, but should have at least primary image
+        if(images.length === 0){
+            alert('Please upload at least one image');
             setSubmitting(false)
             return;
         }
 
         try {
             const createdAt = new Date().toDateString()
+
+            if(video){
+                const vidRef = ref(storage, `videos/${auth.user.uid}/${Date.now()}_${video.name}`)
+                const snap = await uploadBytes(vidRef, video)
+                videoUrl = await getDownloadURL(snap.ref)
+            }
+
+            // Process all images
+            const imageUrls = []
+            for(let i = 0; i < images.length; i++){
+                const image = images[i]
+                try {
+                    let imageUrl = '';
+                    if (image.type === 'image/svg+xml') {
+                        imageUrl = await readImageAsDataUrl(image)
+                    } else if (image.size <= 150 * 1024) {
+                        imageUrl = await readImageAsDataUrl(image)
+                    } else {
+                        const optimizedBlob = await resizeImage(image)
+                        imageUrl = await readImageAsDataUrl(optimizedBlob)
+                    }
+                    imageUrls.push(imageUrl)
+                } catch (error) {
+                    console.log('Error processing image:', error)
+                    alert(`Failed to process image ${i + 1}`);
+                    setSubmitting(false)
+                    return;
+                }
+            }
+
             const docRef = await addDoc(collection(fireStore, 'products'), {
                 title,
                 category,
                 price,
                 description,
-                imageUrl,
+                imageUrl: imageUrls[0], // Primary image
+                images: imageUrls, // All images array
+                videoUrl,
                 userId: auth.user.uid,
                 userName: auth.user.displayName || 'Anonymous',
                 createAt: createdAt,
@@ -157,7 +212,9 @@ const Sell = (props) => {
                 category,
                 price,
                 description,
-                imageUrl,
+                imageUrl: imageUrls[0],
+                images: imageUrls,
+                videoUrl,
                 userId: auth.user.uid,
                 userName: auth.user.displayName || 'Anonymous',
                 createAt: createdAt,
@@ -165,7 +222,8 @@ const Sell = (props) => {
 
             setItems((prev) => [optimisticItem, ...(prev || [])])
 
-            setImage(null);
+            setImages([]);
+            setVideo(null);
             const datas = await fetchFromFirestore();
             setItems(datas)
             toggleModalSell();
@@ -177,41 +235,26 @@ const Sell = (props) => {
         }finally{
             setSubmitting(false)
         }
-
-        
-
     }
 
 
 
   return (
     <div>
-        <Modal
-          theme={{
-            root: {
-              base: "fixed inset-0 z-[3000] flex h-full w-full items-center justify-center overflow-y-auto overflow-x-hidden bg-black/60 backdrop-blur-sm",
-              show: {
-                on: "flex",
-                off: "hidden"
-              }
+        <Modal  theme={{
+            "root": {
+                "base": "fixed inset-x-0 top-0 z-[1200] h-[100dvh] overflow-y-auto overflow-x-hidden md:inset-0"
             },
-            content: {
-              base: "relative w-full p-4 md:h-auto",
-              inner: "relative flex max-h-[92dvh] max-w-[900px] w-full mx-auto flex-col rounded-3xl bg-white shadow-2xl overflow-hidden"
+             "content": {
+                "base": "relative w-full p-2 sm:p-4 md:h-auto",
+                "inner": "relative flex max-h-[calc(100dvh-2rem)] max-w-[900px] w-full mx-auto flex-col rounded-3xl bg-white shadow-2xl overflow-hidden"
             },
-          }}
-          onClick={toggleModalSell}
-          show={status}
-          className=""
-          position={'center'}
-          size="xl"
-          popup={true}
-        >
-            <ModalBody  className="bg-gradient-to-br from-sky-50 via-white to-white p-0 rounded-3xl h-full overflow-auto"   onClick={(event) => event.stopPropagation()}>
+        }}  onClick={toggleModalSell} show={status}  className="xchange-modal-layer !z-[1200] bg-black/60 backdrop-blur-sm"  position={'center'}  size="xl" popup= {true}>
+            <ModalBody  className="bg-gradient-to-br from-sky-50 via-white to-white p-0 rounded-3xl h-full max-h-[calc(100dvh-2rem)] overflow-y-auto"   onClick={(event) => event.stopPropagation()}>
                 <img 
                 onClick={()=>{
                     toggleModalSell();
-                    setImage(null);
+                    setImages([]);
                 }}
                 className="w-6 absolute z-20 top-6 right-8 cursor-pointer hover:scale-105 transition"
                 src={close} alt="" />
@@ -237,37 +280,83 @@ const Sell = (props) => {
                        <Input setInput={setPrice} placeholder='Price'/>
                        <Input setInput={setDescription} placeholder='Description'/>
 
-                       <div  className="pt-2 w-full relative">
-                       {image ? (
-                        <div className="relative h-64 sm:h-72 w-full flex justify-center border border-sky-200 rounded-2xl overflow-hidden bg-white shadow-sm">
-                            <img  className="object-contain" src={URL.createObjectURL(image)}   alt="" />
+                       <div className="pt-2 w-full relative">
+                        <p className="text-sm font-semibold text-slate-800 mb-2">Images (up to 6, at least 1 required)</p>
+                        {images.length > 0 ? (
+                            <div className="space-y-3">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                    {images.map((image, idx) => (
+                                        <div key={idx} className="relative h-32 sm:h-40 border border-sky-200 rounded-xl overflow-hidden bg-white shadow-sm group">
+                                            <img className="w-full h-full object-contain" src={URL.createObjectURL(image)} alt={`Upload ${idx + 1}`} />
+                                            <button
+                                                type="button"
+                                                onClick={() => removeImage(idx)}
+                                                className="absolute top-2 right-2 text-xs px-2 py-1 rounded-full bg-white/90 border border-slate-200 shadow-sm hover:bg-white font-semibold text-red-600 opacity-0 group-hover:opacity-100 transition"
+                                            >
+                                                Remove
+                                            </button>
+                                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition pointer-events-none" />
+                                        </div>
+                                    ))}
+                                </div>
+                                {images.length < MAX_IMAGES && (
+                                    <label className="relative h-24 w-full border-2 border-dashed border-sky-200 rounded-2xl flex flex-col items-center justify-center bg-white hover:border-sky-400 hover:bg-sky-50 transition cursor-pointer shadow-sm">
+                                        <input
+                                            onChange={handleImageUpload}
+                                            type="file"
+                                            accept="image/*"
+                                            className="absolute inset-0 h-full w-full opacity-0 cursor-pointer z-30"
+                                        />
+                                        <div className="flex flex-col items-center gap-1 pointer-events-none text-center">
+                                            <p className="text-center text-xs font-semibold text-slate-800">Add more images ({images.length}/{MAX_IMAGES})</p>
+                                            <p className="text-center text-xs text-slate-500">Click or drag</p>
+                                        </div>
+                                    </label>
+                                )}
+                            </div>
+                        ) : (
+                            <label className="relative h-64 sm:h-72 w-full border-2 border-dashed border-sky-200 rounded-2xl flex flex-col items-center justify-center bg-white hover:border-sky-400 hover:bg-sky-50 transition cursor-pointer shadow-sm">
+                                <input
+                                    onChange={handleImageUpload}
+                                    type="file"
+                                    accept="image/*"
+                                    className="absolute inset-0 h-full w-full opacity-0 cursor-pointer z-30"
+                                />
+                                <div className="flex flex-col items-center gap-2 pointer-events-none">
+                                    <img className="w-12" src={fileUpload} alt="" />
+                                    <p className="text-center text-sm font-semibold text-slate-800">Drop or click to upload</p>
+                                    <p className="text-center text-xs text-slate-500">SVG, PNG, JPG — under 8MB</p>
+                                </div>
+                            </label>
+                        )}
+                       </div>
+
+                      <div className="pt-4 w-full">
+                        <p className="text-sm font-semibold text-slate-800 mb-2">Optional video walk-through (60-120s, &lt;120MB)</p>
+                        {video ? (
+                          <div className="relative h-48 w-full border border-amber-200 rounded-2xl overflow-hidden bg-white shadow-sm flex items-center justify-center">
+                            <video className="h-full" src={URL.createObjectURL(video)} controls />
                             <button
                               type="button"
-                              onClick={() => setImage(null)}
+                              onClick={() => setVideo(null)}
                               className="absolute top-3 right-3 text-xs px-2 py-1 rounded-full bg-white/80 border border-slate-200 shadow-sm hover:bg-white"
                             >
-                              Replace
+                              Remove
                             </button>
-                        </div>
-                       ) : (
-                        <label  className="relative h-64 sm:h-72 w-full border-2 border-dashed border-sky-200 rounded-2xl flex flex-col items-center justify-center bg-white hover:border-sky-400 hover:bg-sky-50 transition cursor-pointer shadow-sm">
+                          </div>
+                        ) : (
+                          <label className="relative h-20 w-full border-2 border-dashed border-amber-200 rounded-xl flex flex-col sm:flex-row items-center justify-between px-4 bg-amber-50/60 hover:border-amber-400 transition cursor-pointer text-sm text-amber-800 gap-2">
                             <input
-                            onChange={handleImageUpload}
-                            type="file"
-                            accept="image/*"
-                            className="absolute inset-0 h-full w-full opacity-0 cursor-pointer z-30"
-                            required
+                              onChange={handleVideoUpload}
+                              type="file"
+                              accept="video/*"
+                              className="absolute inset-0 h-full w-full opacity-0 cursor-pointer z-30"
                             />
-
-                            <div  className="flex flex-col items-center gap-2 pointer-events-none">
-                                <img  className="w-12" src={fileUpload} alt="" />
-                                <p  className="text-center text-sm font-semibold text-slate-800">Drop or click to upload</p>
-                                <p  className="text-center text-xs text-slate-500">SVG, PNG, JPG — under 8MB</p>
-                            </div>
-                        </label>
-                       )} 
-
-                       </div>
+                            <span className="font-semibold">Add quick walkthrough video</span>
+                            <span className="text-xs">MP4 / MOV recommended</span>
+                          </label>
+                        )}
+                      </div>
                        
 
                        {

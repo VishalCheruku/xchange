@@ -35,45 +35,32 @@ const Card = ({
         </div>
       ) : null}
 
-      <div className={`grid gap-4 pt-5 ${viewMode === 'list' ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4'}`}>
-        {items.map((item) => (
-          <Link
-            to={`/details/${item.id || ''}`}
-            state={{ item }}
-            key={item.id}
-            onClick={() => onViewItem?.(item)}
-            className="hover-card"
-            style={{ borderWidth: '1px', borderColor: 'lightgrey' }}
-          >
-            <div
+      <div className={`grid gap-5 pt-5 ${viewMode === 'list' ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4'}`}>
+        {items.map((item) => {
+          const cover =
+            (Array.isArray(item.images) ? item.images[0] : item.imageUrl) ||
+            (Array.isArray(item.imageUrls) ? item.imageUrls[0] : '') ||
+            'https://images.unsplash.com/photo-1505691938895-1758d7feb511?auto=format&fit=crop&w=800&q=80'
+          const displayPrice = (() => {
+            const p = String(item.price ?? '')
+            return p.includes('/-') ? p : `${p}/-`
+          })()
+          const date = item.createAt || item.createdAt || ''
+          return (
+            <Link
+              to={`/details/${item.id || ''}`}
+              state={{ item }}
               key={item.id}
-              style={{ borderWidth: '1px', borderColor: 'lightgray' }}
-              className={`relative w-full ${viewMode === 'list' ? 'h-auto' : 'h-72'} rounded-md border-solid bg-gray-50 overflow-hidden cursor-pointer`}
+              onClick={() => onViewItem?.(item)}
+              className="product-card hover-card"
             >
-              <div className={`w-full flex justify-center p-2 overflow-hidden ${viewMode === 'list' ? 'md:w-1/3 md:h-full md:absolute md:left-0 md:top-0' : ''}`}>
-                <img
-                  className={`${viewMode === 'list' ? 'h-36 md:h-full md:object-cover w-full' : 'h-36 object-contain'}`}
-                  src={(Array.isArray(item.imageUrls) ? item.imageUrls[0] : item.imageUrl) || 'https://via.placeholder.com/150'}
-                  alt={item.title}
-                />
-              </div>
-
-              <div className={`details p-1 pl-4 pr-4 ${viewMode === 'list' ? 'md:pl-[36%] md:py-6' : ''}`}>
-                <h1 className="font-bold text-xl text-slate-900">Rs {item.price}</h1>
-                <p className="text-sm pt-2 text-slate-500">{item.category}</p>
-                <p className="pt-2 font-semibold text-slate-800">{item.title}</p>
-                <p className="pt-1 text-xs text-slate-500 line-clamp-2">{item.description}</p>
-                {aiMode && aiHintsByItem?.[item.id] ? (
-                  <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-                    <span className={`ai-mini-chip ${aiHintsByItem[item.id].dealTag}`}>
-                      {aiHintsByItem[item.id].dealTag}
-                    </span>
-                    <span className="ai-mini-chip trust">Trust {aiHintsByItem[item.id].trustScore}</span>
-                  </div>
-                ) : null}
-
+              <div className="product-media">
+                <img src={cover} alt={item.title} loading="lazy" />
+                <div className="product-glow" />
+                <div className="product-chip">{item.category || 'Listing'}</div>
+                <div className="product-price">Rs {displayPrice}</div>
                 <button
-                  className={`absolute flex justify-center items-center p-2 bg-white rounded-full top-3 right-3 cursor-pointer shadow-sm ${favorites.has(item.id) ? 'ring-2 ring-cyan-300' : ''}`}
+                  className={`favorite-btn ${favorites.has(item.id) ? 'active' : ''}`}
                   onClick={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
@@ -81,16 +68,29 @@ const Card = ({
                   }}
                   aria-label="Save item"
                 >
-                  <img
-                    className={`w-5 ${favorites.has(item.id) ? 'scale-110' : ''}`}
-                    src={favorites.has(item.id) ? FavoriteFilled : Favorite}
-                    alt=""
-                  />
+                  <img className="w-4 h-4" src={favorites.has(item.id) ? FavoriteFilled : Favorite} alt="" />
                 </button>
               </div>
-            </div>
-          </Link>
-        ))}
+              <div className="product-body">
+                <p className="product-title line-clamp-1">{item.title}</p>
+                <p className="product-desc line-clamp-2">{item.description}</p>
+                <div className="product-meta">
+                  <span className="product-author">{item.userName || 'Seller'}</span>
+                  <span className="dot">•</span>
+                  <span className="product-date">{date}</span>
+                </div>
+                {aiMode && aiHintsByItem?.[item.id] ? (
+                  <div className="product-hints">
+                    <span className={`ai-mini-chip ${aiHintsByItem[item.id].dealTag}`}>
+                      {aiHintsByItem[item.id].dealTag}
+                    </span>
+                    <span className="ai-mini-chip trust">Trust {aiHintsByItem[item.id].trustScore}</span>
+                  </div>
+                ) : null}
+              </div>
+            </Link>
+          )
+        })}
       </div>
     </div>
   )

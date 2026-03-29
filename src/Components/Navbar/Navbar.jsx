@@ -304,7 +304,7 @@ const Navbar = (props) => {
                 <ul className='list-none flex items-center gap-3 w-full'>
                     <div  className='flex flex-shrink-0'>
                         <p  className='font-semibold uppercase all-cats'>Categories</p>
-                        <img className='w-4 ml-2' src={arrow} alt="" />
+                        <img className='w-4 ml-2 -rotate-90' src={arrow} alt="" />
                     </div>
                     {aiModeEnabled ? (
                       <li>

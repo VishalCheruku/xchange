@@ -3,8 +3,21 @@ const percent = (value) => {
   return `${Math.round(value * 100)}%`;
 };
 
+const formatPrice = (value) => {
+  if (!Number.isFinite(value)) return 'Rs -';
+  return `Rs ${Math.round(value)}`;
+};
+
 const DealInsightsPanel = ({ insight }) => {
   if (!insight) return null;
+
+  // Safely extract pricing values with fallbacks
+  const fastSale = insight?.multiScenarioPricing?.fastSale ?? insight?.priceInsights?.strategies?.fastSale;
+  const balanced = insight?.multiScenarioPricing?.balanced ?? insight?.priceInsights?.strategies?.balanced;
+  const maxProfit = insight?.multiScenarioPricing?.maxProfit ?? insight?.priceInsights?.strategies?.maxProfit;
+  const closeProbability = insight?.dealSuccess?.closeProbability;
+  const etaHours = insight?.dealSuccess?.timeToCloseHours ?? insight?.dealSuccess?.etaHours;
+  const momentum = insight?.dealMomentum;
 
   return (
     <div className="ai-panel">
@@ -15,27 +28,27 @@ const DealInsightsPanel = ({ insight }) => {
       <div className="ai-grid">
         <div className="ai-metric">
           <span>Fast sale</span>
-          <strong>Rs {insight?.multiScenarioPricing?.fastSale ?? '--'}</strong>
+          <strong>{formatPrice(fastSale)}</strong>
         </div>
         <div className="ai-metric">
           <span>Balanced</span>
-          <strong>Rs {insight?.multiScenarioPricing?.balanced ?? '--'}</strong>
+          <strong>{formatPrice(balanced)}</strong>
         </div>
         <div className="ai-metric">
           <span>Max profit</span>
-          <strong>Rs {insight?.multiScenarioPricing?.maxProfit ?? '--'}</strong>
+          <strong>{formatPrice(maxProfit)}</strong>
         </div>
         <div className="ai-metric">
           <span>Close odds</span>
-          <strong>{percent(insight?.dealSuccess?.closeProbability)}</strong>
+          <strong>{percent(closeProbability)}</strong>
         </div>
         <div className="ai-metric">
           <span>ETA to close</span>
-          <strong>{insight?.dealSuccess?.timeToCloseHours ?? insight?.dealSuccess?.etaHours ?? '--'}h</strong>
+          <strong>{Number.isFinite(etaHours) ? `${Math.round(etaHours)}h` : '--'}</strong>
         </div>
         <div className="ai-metric">
           <span>Momentum</span>
-          <strong>{insight?.dealMomentum || '--'}</strong>
+          <strong>{momentum || '--'}</strong>
         </div>
       </div>
       {Array.isArray(insight?.structuredNegotiationGuidance) && insight.structuredNegotiationGuidance.length > 0 ? (
