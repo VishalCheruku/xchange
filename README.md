@@ -255,3 +255,87 @@ Operational Summary
 - AI is embedded as a core system layer across chat, listings, pricing, trust, and decision optimization.
 - AI Mode OFF keeps normal marketplace behavior.
 - AI Mode ON continuously runs intelligence layers with graceful degradation and non-blocking UX.
+
+Latest Frontend Feature Updates (Mar 2026, UI/UX polish)
+- Product cards: redesigned gallery-style cards with glow overlay, category chip, price pill, meta row, and compact favorite control.
+- Favorites modal: opens from Home, shows saved items, each opens its product page on click.
+- Filters: simplified filter bar (sort + min/max price + favorites), removed view toggle; compact spacing.
+- Pricing display: automatically appends "/-" to prices on cards, favorites, and product pages (no duplicates).
+- Active counts: “Active listings” now shows total items minus those with offers; “New today” counts last 24h additions.
+- Sell modal: higher z-index overlay to stay above navbar; optional media uploads; can publish without images.
+- Multi-image readiness: cards and details use the first image from images/imageUrls with a safe photo fallback.
+- Chat tone guard: expanded softening vocabulary (stupid/idiot/useless/trash/etc.) to keep AI-mode chats civil.
+- Trust visuals: trust medium/high chips now green; trust scores remapped to 60–99 (most 85–99) for clearer UX.
+- Navigation tweaks: right-pointing categories caret; favorites button sizing fixed.
+- Performance: deferred search for smoother typing; recent items + favorites persisted in localStorage.
+
+Modules touched (new/updated)
+- UI: `src/Components/Card/Card.jsx`, `src/index.css` (product cards, favorite control, trust chip colors)
+- Home: `src/Components/Pages/Home.jsx` (filters, counts, favorites modal links, offer-aware active count)
+- Details: `src/Components/Details/Details.jsx` (price suffix, trust chips, offer chips)
+- Chat: `src/Components/Chat/ChatModal.jsx` (tone guard terms)
+- Firebase config: `src/Components/Firebase/Firebase.js` (new project config, appspot bucket)
+- Navbar: `src/Components/Navbar/Navbar.jsx` (categories caret)
+
+Usage notes
+- Favorites: click “View favorites” to open the modal; click any favorite to open its product page.
+- Counts: “Active listings” excludes items that already have offers; “New today” reflects last 24h items.
+- Prices: enter plain numbers; UI will render with “/-” automatically.
+================================================================================
+Full Feature Inventory (Mar 2026) - Added Without Removing Previous Content
+================================================================================
+
+Marketplace & Listings
+- Create / edit / delete listings with optional multi-image gallery (up to 6), optional walkthrough video, and image-optional publishing for testing.
+- Home �Fresh recommendations� uses glow-style cards with price pill, category chip, seller meta, and favorites toggle.
+- Categories auto-populate from live data; trending rail (including playful war-gear set) and right-pointing caret in navbar category dropdown.
+- Stats: �Active listings� = total minus items with offers; �New today� = last 24h additions.
+- Favorites: modal launcher on Home shows saved items; each item opens its product page.
+- Price suffix: all prices render with �/-� when not already present.
+
+Search & Discovery
+- Visual + semantic search stubs with pluggable embedding provider hooks; image-upload UI and similarity scoring placeholders ready to wire to CLIP/OpenAI.
+- Deferred search input for smooth typing; discovery cards link to details with resilient image fallbacks.
+
+Offers & Negotiation
+- Buyers send offers from product page; sellers receive notifications; offer status updates flow to buyers.
+- Negotiation chips (offer -8%, counter -3%, match price, clear, sweeten +5%) kept; duplicate text chips removed.
+- Offer-aware active counts and per-product offer history placeholders in details view.
+
+Chat & Messaging
+- Realtime chat per buyer/seller/listing with Firebase listeners; typing indicator, read receipts, image attachments, emoji support.
+- Tone guard expanded to defuse harsh phrasing; AI-mode inline assist remains non-blocking.
+- �Message seller� opens chat scoped to the product; threads named after product titles to avoid duplicates.
+
+Reviews & Ratings
+- Per-product reviews stored per listing (no cross-product bleed); animated star input; review list scoped to the opened product.
+- Trust banner shows remapped scores (60�99) with green �Trust medium/high� chips and confidence indicator.
+
+Authentication & Profile
+- Google popup sign-in; unauthenticated users see login/CTA in navbar; authenticated users see profile avatar with dropdown (profile, logout).
+- My Listings page shows owner�s inventory only; dashboard keeps �Offers you made� section.
+
+Admin & Governance
+- Admin panel placeholder routes for user management, moderation, category/analytics, and verification review (role-gated).
+- Report and banner management stubs documented for future wiring.
+
+Notifications
+- In-app notifications for offers/messages with unread counts in header; mark-as-read plumbing hooks retained.
+
+Loading & UX Polish
+- Restored �X� loading animation that fills while app boots.
+- Sell modal placed above navbar (higher z-index); square-ish, rounded design with brighter input borders.
+- Product gallery in details uses object-contain to avoid zooming; thumbnails remain clickable.
+
+Data & Infrastructure
+- Firebase project updated to `xchange-555555` (appspot storage bucket).
+- CORS config documented via `cors.json` for local + hosted origins.
+- LocalStorage used for favorites and recent items; Firestore fetch guards against quota/backoff errors.
+
+How to Run / Validate
+- npm install
+- npm run dev
+- Open http://localhost:5173 and verify:
+  - Home cards render images (or fallback), prices show �/-�, favorites modal opens and links to product pages.
+  - Sell modal sits above navbar; listing can be published without images during tests.
+  - Product page shows trust banner (green chips), offer box without duplicate text, reviews list is per-product, chat opens and persists messages.
