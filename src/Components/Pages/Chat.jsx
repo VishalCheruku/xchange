@@ -408,7 +408,7 @@ const Chat = () => {
       </div>
 
       <Login openModal={openModal} toggleModal={toggleModal} />
-      <Sell setItems={itemsCtx.setItems} toggleModal={toggleModalSell} status={openModalSell} />
+      <Sell setItems={itemsCtx.setItems} toggleModalSell={toggleModalSell} status={openModalSell} />
       {activeConv && (
         <ChatModal
           open={showChat}

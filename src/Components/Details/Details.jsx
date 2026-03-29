@@ -59,6 +59,11 @@ const Details = () => {
     return []
   }, [item])
   const [activeImage, setActiveImage] = useState(0)
+  const [uploadingGalleryImages, setUploadingGalleryImages] = useState(false)
+  const MAX_IMAGES = 6
+  const MAX_FILE_MB = 8
+  const MAX_DIMENSION = 1600
+  const JPEG_QUALITY = 0.78
 
   useEffect(() => {
     setActiveImage(0)
@@ -399,6 +404,132 @@ const Details = () => {
     return Number.isFinite(asDate.getTime()) ? asDate.toLocaleString() : ''
   }
 
+  const readImageAsDataUrl = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const resizeImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const reader = new FileReader()
+
+      reader.onload = () => {
+        img.src = reader.result
+      }
+      reader.onerror = reject
+
+      img.onload = () => {
+        const scale = Math.min(1, MAX_DIMENSION / Math.max(img.width, img.height))
+        const targetW = Math.round(img.width * scale)
+        const targetH = Math.round(img.height * scale)
+
+        const canvas = document.createElement('canvas')
+        canvas.width = targetW
+        canvas.height = targetH
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Canvas not supported'))
+          return
+        }
+        ctx.drawImage(img, 0, 0, targetW, targetH)
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error('Image compression failed'))
+              return
+            }
+            resolve(blob)
+          },
+          'image/jpeg',
+          JPEG_QUALITY
+        )
+      }
+      img.onerror = reject
+
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const handleAddGalleryImages = async (event) => {
+    if (!isOwner || !item?.id) return
+    const selected = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (selected.length === 0) return
+
+    const remainingSlots = Math.max(0, MAX_IMAGES - gallery.length)
+    if (remainingSlots === 0) {
+      alert(`You can upload a maximum of ${MAX_IMAGES} images.`)
+      return
+    }
+
+    const filesToProcess = selected.slice(0, remainingSlots)
+    const skipped = []
+    if (selected.length > filesToProcess.length) {
+      skipped.push(`Only ${remainingSlots} more image(s) can be added.`)
+    }
+
+    setUploadingGalleryImages(true)
+    try {
+      const newImageUrls = []
+
+      for (const file of filesToProcess) {
+        if (!file.type.startsWith('image/')) {
+          skipped.push(`${file.name}: invalid image file`)
+          continue
+        }
+        const sizeMb = file.size / (1024 * 1024)
+        if (sizeMb > MAX_FILE_MB) {
+          skipped.push(`${file.name}: file must be under ${MAX_FILE_MB}MB`)
+          continue
+        }
+
+        try {
+          let imageUrl = ''
+          if (file.type === 'image/svg+xml' || file.size <= 150 * 1024) {
+            imageUrl = await readImageAsDataUrl(file)
+          } else {
+            const optimizedBlob = await resizeImage(file)
+            imageUrl = await readImageAsDataUrl(optimizedBlob)
+          }
+          newImageUrls.push(imageUrl)
+        } catch (error) {
+          console.error('Failed to process image:', error)
+          skipped.push(`${file.name}: could not process file`)
+        }
+      }
+
+      if (newImageUrls.length === 0) {
+        if (skipped.length > 0) alert(skipped.join('\n'))
+        return
+      }
+
+      const nextImages = [...gallery, ...newImageUrls].slice(0, MAX_IMAGES)
+      const payload = {
+        images: nextImages,
+        imageUrl: nextImages[0] || item?.imageUrl || '',
+      }
+
+      await setDoc(doc(fireStore, 'products', item.id), payload, { merge: true })
+      setItem((prev) => (prev ? { ...prev, ...payload } : prev))
+      itemsCtx.setItems((prev) => (prev || []).map((it) => it.id === item.id ? { ...it, ...payload } : it))
+      setActiveImage((prev) => (prev === -1 ? 0 : Math.min(prev, Math.max(nextImages.length - 1, 0))))
+
+      if (skipped.length > 0) {
+        alert(`Added ${newImageUrls.length} image(s).\n${skipped.join('\n')}`)
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Failed to add more photos. Please try again.')
+    } finally {
+      setUploadingGalleryImages(false)
+    }
+  }
+
   const saveEdits = async () => {
     if (!isOwner || !item?.id) return
     const payload = {
@@ -471,7 +602,27 @@ const Details = () => {
                       <img className="h-full w-full object-cover" src={src} alt={`thumb-${idx}`} />
                     </button>
                   ))}
+                  {isOwner ? (
+                    <label
+                      className={`h-16 w-24 flex-shrink-0 border-2 border-dashed rounded-lg flex items-center justify-center px-1 text-center ${gallery.length >= MAX_IMAGES || uploadingGalleryImages ? 'border-slate-300 text-slate-400 cursor-not-allowed' : 'border-sky-300 text-sky-700 cursor-pointer hover:bg-sky-50 hover:border-sky-500 transition'}`}
+                    >
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleAddGalleryImages}
+                        disabled={gallery.length >= MAX_IMAGES || uploadingGalleryImages}
+                        className="hidden"
+                      />
+                      <span className="text-[11px] font-semibold leading-tight whitespace-pre-line">
+                        {uploadingGalleryImages ? 'Uploading...' : gallery.length >= MAX_IMAGES ? `Limit ${MAX_IMAGES}` : `+ Add photos\n${gallery.length}/${MAX_IMAGES}`}
+                      </span>
+                    </label>
+                  ) : null}
                 </div>
+                {isOwner ? (
+                  <p className="text-xs text-slate-500 mt-1">You can keep 1 photo or add up to 6 total. Extra photos are optional.</p>
+                ) : null}
               </div>
               <div className="flex flex-col relative w-full">
                   <div className="flex items-start justify-between gap-3">
@@ -764,7 +915,7 @@ const Details = () => {
           ) : null}
 
           <ChatModal open={openChat} onClose={() => setOpenChat(false)} item={item} user={user} conversationId={conversationId} />
-          <Sell setItems={(itemsCtx ).setItems} toggleModal={toggleModalSell} status={openModalSell} />
+          <Sell setItems={(itemsCtx ).setItems} toggleModalSell={toggleModalSell} status={openModalSell} />
       </div>
   );
 };

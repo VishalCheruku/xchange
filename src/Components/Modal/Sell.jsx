@@ -12,7 +12,8 @@ import close from '../../assets/close.svg'
 
 
 const Sell = (props) => {  
-    const {toggleModalSell,status ,setItems} = props
+    const { toggleModalSell, toggleModal, status, setItems } = props
+    const closeModal = toggleModalSell || toggleModal || (() => {})
 
     const [title,setTitle] = useState('')
     const [category,setCategory] = useState('')
@@ -226,7 +227,7 @@ const Sell = (props) => {
             setVideo(null);
             const datas = await fetchFromFirestore();
             setItems(datas)
-            toggleModalSell();
+            closeModal();
             
         } catch (error) {
             console.log(error);
@@ -249,11 +250,11 @@ const Sell = (props) => {
                 "base": "relative w-full p-2 sm:p-4 md:h-auto",
                 "inner": "relative flex max-h-[calc(100dvh-2rem)] max-w-[900px] w-full mx-auto flex-col rounded-3xl bg-white shadow-2xl overflow-hidden"
             },
-        }}  onClick={toggleModalSell} show={status}  className="xchange-modal-layer !z-[1200] bg-black/60 backdrop-blur-sm"  position={'center'}  size="xl" popup= {true}>
+        }}  onClick={closeModal} show={status}  className="xchange-modal-layer !z-[1200] bg-black/60 backdrop-blur-sm"  position={'center'}  size="xl" popup= {true}>
             <ModalBody  className="bg-gradient-to-br from-sky-50 via-white to-white p-0 rounded-3xl h-full max-h-[calc(100dvh-2rem)] overflow-y-auto"   onClick={(event) => event.stopPropagation()}>
                 <img 
                 onClick={()=>{
-                    toggleModalSell();
+                    closeModal();
                     setImages([]);
                 }}
                 className="w-6 absolute z-20 top-6 right-8 cursor-pointer hover:scale-105 transition"
