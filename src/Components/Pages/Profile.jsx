@@ -7,9 +7,11 @@ import { auth, fireStore } from '../Firebase/Firebase'
 import { updateProfile } from 'firebase/auth'
 import { useNavigate } from 'react-router-dom'
 import { ItemsContext } from '../Context/Item'
-import { collection, onSnapshot, query, where } from 'firebase/firestore'
+import { collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore'
+import { buildUpiQrUrl, DEFAULT_UPI_QR_URL } from '../../utils/payment'
 
 const STORAGE_KEY = 'xchange_profile_extra'
+const UPI_REGEX = /^[a-zA-Z0-9._-]{2,}@[a-zA-Z][a-zA-Z0-9.-]{1,}$/
 
 const Profile = () => {
   const [user] = useAuthState(auth)
@@ -32,6 +34,13 @@ const Profile = () => {
   const [location, setLocation] = useState(stored[user?.uid || '']?.location || '')
   const [bio, setBio] = useState(stored[user?.uid || '']?.bio || '')
   const [phone, setPhone] = useState(stored[user?.uid || '']?.phone || '')
+  const [upiId, setUpiId] = useState('')
+  const [savedUpiId, setSavedUpiId] = useState('')
+  const [savedQrUrl, setSavedQrUrl] = useState(DEFAULT_UPI_QR_URL)
+  const [qrPreview, setQrPreview] = useState(DEFAULT_UPI_QR_URL)
+  const [paymentStatus, setPaymentStatus] = useState('')
+  const [paymentSaving, setPaymentSaving] = useState(false)
+  const [profileDocReady, setProfileDocReady] = useState(false)
 
   useEffect(() => {
     setDisplayName(user?.displayName || '')
@@ -55,10 +64,40 @@ const Profile = () => {
     return () => unsub()
   }, [user?.uid])
 
+  useEffect(() => {
+    if (!user?.uid) {
+      setUpiId('')
+      setSavedUpiId('')
+      setSavedQrUrl(DEFAULT_UPI_QR_URL)
+      setQrPreview(DEFAULT_UPI_QR_URL)
+      setProfileDocReady(false)
+      return
+    }
+    const profileRef = doc(fireStore, 'userProfiles', user.uid)
+    const unsub = onSnapshot(profileRef, (snap) => {
+      const payment = snap.data()?.payment || {}
+      const nextUpi = payment.upiId || ''
+      const nextQrUrl = payment.qrUrl || buildUpiQrUrl(nextUpi, user?.displayName || 'Seller')
+      setUpiId(nextUpi)
+      setSavedUpiId(nextUpi)
+      setSavedQrUrl(nextQrUrl)
+      setQrPreview(nextQrUrl)
+      setProfileDocReady(true)
+    })
+    return () => unsub()
+  }, [user?.uid, user?.displayName])
+
+  useEffect(() => {
+    return () => {
+      if (qrPreview && qrPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(qrPreview)
+      }
+    }
+  }, [qrPreview])
+
   const handleWithdrawOffer = async (offerId) => {
     if (!offerId) return
     try {
-      const { deleteDoc, doc } = await import('firebase/firestore')
       await deleteDoc(doc(fireStore, 'offers', offerId))
       setStatus('Offer withdrawn successfully.')
       setTimeout(() => setStatus(''), 3000)
@@ -97,6 +136,59 @@ const Profile = () => {
     }
   }
 
+  const handleQrSelect = (event) => {
+    event.target.value = ''
+    setQrPreview(savedQrUrl || DEFAULT_UPI_QR_URL)
+    setPaymentStatus('Default QR is already set. Enter UPI ID and save.')
+  }
+
+  const isUpiValid = UPI_REGEX.test(String(upiId || '').trim())
+  const canSavePayment = isUpiValid && !paymentSaving && profileDocReady
+
+  const handleSavePayment = async (event) => {
+    event.preventDefault()
+    if (!user?.uid || !canSavePayment) return
+
+    setPaymentSaving(true)
+    setPaymentStatus('Saving payment details...')
+    try {
+      const normalizedUpi = String(upiId || '').trim()
+      const qrUrl = buildUpiQrUrl(normalizedUpi, displayName || user.displayName || 'Seller')
+      setPaymentStatus('Saving payment details...')
+      await setDoc(doc(fireStore, 'userProfiles', user.uid), {
+        uid: user.uid,
+        email: user.email || '',
+        displayName: displayName || user.displayName || '',
+        payment: {
+          upiId: normalizedUpi,
+          qrUrl,
+          updatedAt: serverTimestamp(),
+        },
+        updatedAt: serverTimestamp(),
+      }, { merge: true })
+
+      if (qrPreview && qrPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(qrPreview)
+      }
+      setSavedUpiId(normalizedUpi)
+      setSavedQrUrl(qrUrl)
+      setQrPreview(qrUrl)
+      setPaymentStatus('Payment details saved successfully.')
+    } catch (err) {
+      console.error(err)
+      setPaymentStatus('Could not save payment details. Try again.')
+    } finally {
+      setPaymentSaving(false)
+    }
+  }
+
+  const myListings = useMemo(() => {
+    const items = itemsCtx.items || []
+    const uid = user?.uid
+    if (!uid) return []
+    return items.filter((it) => it.userId === uid)
+  }, [itemsCtx.items, user?.uid])
+
   if (!user) {
     return (
       <div>
@@ -119,13 +211,6 @@ const Profile = () => {
       </div>
     )
   }
-
-  const myListings = useMemo(() => {
-    const items = itemsCtx.items || []
-    const uid = user?.uid
-    if (!uid) return []
-    return items.filter((it) => it.userId === uid)
-  }, [itemsCtx.items, user?.uid])
 
   return (
     <div>
@@ -181,6 +266,70 @@ const Profile = () => {
                 {status && <span className="text-sm text-slate-600">{status}</span>}
               </div>
             </form>
+
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm">
+              <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Payment Option</p>
+              <h3 className="text-xl font-semibold text-slate-900 mt-2">Seller payment setup</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Add your UPI QR and UPI ID so buyers can pay you directly.
+              </p>
+
+              <form className="mt-4 grid gap-4" onSubmit={handleSavePayment}>
+                <label className="control">
+                  UPI QR (JPG/PNG)
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg"
+                    onChange={handleQrSelect}
+                    className="p-2"
+                    disabled
+                  />
+                </label>
+                <p className="text-xs text-slate-500">Default QR is pre-configured. You only need to enter UPI ID.</p>
+
+                {qrPreview ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 mb-2">QR Preview</p>
+                    <img
+                      src={qrPreview}
+                      alt="UPI QR preview"
+                      className="w-64 h-64 sm:w-72 sm:h-72 rounded-lg object-contain border border-slate-200 bg-white"
+                    />
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">Upload a QR image to enable payments.</p>
+                )}
+
+                <label className="control">
+                  UPI ID
+                  <input
+                    type="text"
+                    value={upiId}
+                    onChange={(e) => {
+                      setUpiId(e.target.value)
+                      setPaymentStatus('')
+                    }}
+                    placeholder="example@upi"
+                    autoComplete="off"
+                  />
+                </label>
+                {upiId && !isUpiValid ? (
+                  <p className="text-xs text-rose-600">Please enter a valid UPI ID (example: yourname@upi).</p>
+                ) : null}
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={!canSavePayment}
+                    className={`xchange-btn ${!canSavePayment ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : ''}`}
+                  >
+                    {paymentSaving ? 'Saving...' : 'Save payment details'}
+                  </button>
+                  {savedUpiId ? <span className="text-xs text-slate-500">Current UPI: {savedUpiId}</span> : null}
+                </div>
+                {paymentStatus ? <p className="text-sm text-slate-600">{paymentStatus}</p> : null}
+              </form>
+            </div>
           </div>
 
           <div className="hero-panel">

@@ -13,6 +13,7 @@ import ChatModal from "../Chat/ChatModal";
 import { useAIMode } from "../Context/AIMode";
 import DealInsightsPanel from "../AI/DealInsightsPanel";
 import TrustBanner from "../AI/TrustBanner";
+import { buildUpiQrUrl, DEFAULT_UPI_QR_URL } from "../../utils/payment";
 
 const Details = () => {
   const location = useLocation();
@@ -50,6 +51,9 @@ const Details = () => {
   const [notFound, setNotFound] = useState(false)
   const [aiInsights, setAIInsights] = useState(null)
   const [aiLoading, setAILoading] = useState(false)
+  const [sellerPayment, setSellerPayment] = useState(null)
+  const [openPayment, setOpenPayment] = useState(false)
+  const [copyStatus, setCopyStatus] = useState('')
   const conversationId = item && user ? `${item.id}_${[item.userId, user.uid].sort().join('_')}` : null
   const gallery = useMemo(() => {
     if (!item) return []
@@ -104,7 +108,6 @@ const Details = () => {
 
   const toggleModal = () => setModal(!openModal);
   const toggleModalSell = () => setModalSell(!openModalSell);
-  const toggleChat = () => setOpenChat((prev)=>!prev)
 
   // hydrate item from params or location
   useEffect(() => {
@@ -168,6 +171,35 @@ const Details = () => {
     })
     return () => unsub()
   }, [item?.id])
+
+  useEffect(() => {
+    if (!item?.userId) {
+      setSellerPayment(null)
+      return
+    }
+    const sellerProfileRef = doc(fireStore, 'userProfiles', item.userId)
+    const unsub = onSnapshot(sellerProfileRef, (snap) => {
+      const payment = snap.data()?.payment || null
+      if (payment?.upiId) {
+        const qrUrl = payment.qrUrl || buildUpiQrUrl(payment.upiId, item?.userName || 'Seller') || DEFAULT_UPI_QR_URL
+        setSellerPayment({ upiId: payment.upiId, qrUrl })
+        return
+      }
+      setSellerPayment(null)
+    })
+    return () => unsub()
+  }, [item?.userId, item?.userName])
+
+  useEffect(() => {
+    if (sellerPayment?.upiId && sellerPayment?.qrUrl) return
+    setOpenPayment(false)
+  }, [sellerPayment])
+
+  useEffect(() => {
+    if (!copyStatus) return
+    const timeout = setTimeout(() => setCopyStatus(''), 2500)
+    return () => clearTimeout(timeout)
+  }, [copyStatus])
 
   useEffect(() => {
     let cancelled = false
@@ -553,6 +585,41 @@ const Details = () => {
     }
   }
 
+  const paymentReady = Boolean(sellerPayment?.upiId)
+
+  const handleOpenPayment = () => {
+    if (!user) {
+      toggleModal()
+      return
+    }
+    if (!paymentReady || isOwner) return
+    setCopyStatus('')
+    setOpenPayment(true)
+  }
+
+  const copyUpiId = async () => {
+    if (!sellerPayment?.upiId) return
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(sellerPayment.upiId)
+      } else {
+        const tempInput = document.createElement('textarea')
+        tempInput.value = sellerPayment.upiId
+        tempInput.setAttribute('readonly', '')
+        tempInput.style.position = 'absolute'
+        tempInput.style.left = '-9999px'
+        document.body.appendChild(tempInput)
+        tempInput.select()
+        document.execCommand('copy')
+        document.body.removeChild(tempInput)
+      }
+      setCopyStatus('UPI ID copied.')
+    } catch (err) {
+      console.error(err)
+      setCopyStatus('Could not copy UPI ID. Please copy it manually.')
+    }
+  }
+
   if (!item && !notFound) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-600">
@@ -684,7 +751,19 @@ const Details = () => {
                       setOpenChat(true)
                     }}>Message seller</button>
                     <button className="xchange-btn ghost" onClick={() => offerSectionRef.current?.scrollIntoView({ behavior: 'smooth' })}>Make offer</button>
+                    {!isOwner ? (
+                      <button
+                        className={`xchange-btn ghost ${!paymentReady ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : ''}`}
+                        onClick={handleOpenPayment}
+                        disabled={!paymentReady}
+                      >
+                        Payment
+                      </button>
+                    ) : null}
                   </div>
+                  {!isOwner && !paymentReady ? (
+                    <p className="mt-2 text-xs text-slate-500">Seller has not added payment details yet.</p>
+                  ) : null}
                   <div className="mt-6 grid grid-cols-2 gap-3">
                     <div className="detail-card">
                       <p className="detail-title">Seller</p>
@@ -909,6 +988,41 @@ const Details = () => {
                   >
                     {deleting ? 'Deleting…' : 'Delete'}
                   </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {openPayment && sellerPayment ? (
+            <div className="fixed inset-0 z-[160] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-2xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Payment</p>
+                    <p className="text-lg font-semibold text-slate-900">Scan to Pay</p>
+                  </div>
+                  <button className="text-slate-500 hover:text-slate-900 text-xl" onClick={() => setOpenPayment(false)}>x</button>
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 flex items-center justify-center">
+                    <img
+                      src={sellerPayment.qrUrl}
+                      alt="Seller UPI QR"
+                      className="w-72 h-72 sm:w-80 sm:h-80 object-contain rounded-lg border border-slate-200 bg-white"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">UPI ID</p>
+                    <p className="text-slate-900 font-semibold mt-1 break-all">{sellerPayment.upiId}</p>
+                  </div>
+
+                  <div className="flex justify-end gap-2">
+                    <button className="favorite-toggle" onClick={copyUpiId}>Copy UPI ID</button>
+                    <button className="favorite-toggle ghost" onClick={() => setOpenPayment(false)}>Close</button>
+                  </div>
+                  {copyStatus ? <p className="text-sm text-slate-600">{copyStatus}</p> : null}
                 </div>
               </div>
             </div>
